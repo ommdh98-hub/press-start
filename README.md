@@ -125,7 +125,8 @@ press-start/
 ├── models/                  # hit_model.joblib + metrics.json (python -m src.model)
 ├── reports/figures/         # exported PNG charts
 ├── .streamlit/config.toml   # dark theme
-└── requirements.txt
+├── requirements.txt         # dashboard packages, pinned (used by Streamlit Cloud)
+└── requirements-dev.txt     # + Jupyter packages for the notebooks
 ```
 
 notebooks/eda.ipynb - concise EDA notebook (submission)
@@ -140,7 +141,8 @@ cd press-start
 # 2. Create a virtual environment and install packages
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt       # the dashboard (exact tested versions)
+pip install -r requirements-dev.txt   # optional: also Jupyter packages to run the notebooks
 
 # 3. (Optional) rebuild the cleaned data from the original file
 #    put games_march2025_full.csv in data/raw/ first
@@ -153,6 +155,8 @@ streamlit run app/app.py
 ```
 
 Open `notebooks/visual_analysis.ipynb` in VS Code (Jupyter extension) to see the full analysis with outputs.
+
+**Online (Streamlit Community Cloud):** the dashboard runs from this repo with Python 3.12 and main file `app/app.py`. It only reads files that are in the repo (`data/processed/`, `models/`, `app/game/`, `.streamlit/config.toml`), never the raw Kaggle file.
 
 ## Dashboard
 
