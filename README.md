@@ -106,7 +106,8 @@ press-start/
 │   ├── model.py             # Hit Predictor: training, validation, explanation
 │   └── plots.py             # static charts for the notebook / slides
 ├── notebooks/
-│   └── visual_analysis.ipynb   # the visual EDA (loading, cleaning summary, charts, insights, model)
+│   ├── eda.ipynb               # concise EDA notebook (submission)
+│   └── visual_analysis.ipynb   # detailed version (loading, cleaning summary, charts, insights, model)
 ├── app/
 │   ├── app.py               # Streamlit entry point: router, sidebar text, top navigation bar
 │   ├── common.py            # shared style, cached data + model, UI helpers
@@ -126,6 +127,8 @@ press-start/
 ├── .streamlit/config.toml   # dark theme
 └── requirements.txt
 ```
+
+notebooks/eda.ipynb - concise EDA notebook (submission)
 
 ## How to Run
 
