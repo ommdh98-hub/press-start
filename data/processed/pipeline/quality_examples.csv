@@ -1,0 +1,14 @@
+finding,label,value,detail
+sentinel,Smallest real review count,10.0,
+sentinel,Rows with -1,39575.0,
+sentinel,Share of rows with -1 (%),41.7,
+sources,Games with both counts,44125.0,
+sources,Identical counts (%),14.1,
+sources,SteamSpy coverage 2020 (%),91.0,
+sources,SteamSpy coverage 2023 (%),63.7,
+playtests,BACKGAMMON Playtest,716546.0,
+playtests,Baldur's Gate 3 Playtest,648367.0,
+playtests,NARAKA: BLADEPOINT Playtest,275877.0,
+duplicates,Tom Clancy's Rainbow Six® Siege,1168404.0,3
+duplicates,Metro Exodus,102923.0,1
+duplicates,EA SPORTS FC™ 24,91718.0,2

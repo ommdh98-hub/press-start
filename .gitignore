@@ -1,0 +1,17 @@
+# Original dataset (≈470 MB) is not uploaded — download it from Kaggle (see README)
+data/raw/*
+!data/raw/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Jupyter / editors / OS
+.ipynb_checkpoints/
+.vscode/
+.DS_Store
+
+# Streamlit secrets
+.streamlit/secrets.toml

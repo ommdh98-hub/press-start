@@ -1,0 +1,9 @@
+step,rows_before,rows_after,removed,reason
+Raw file loaded,94948,94948,0,Original Kaggle file (March 2025 snapshot)
+Remove test builds,94948,89701,5247,Playtest / beta builds are not released games
+Remove software,89701,88665,1036,"Only software genres (Utilities, Video Production…)"
+Remove adult content,88665,85162,3503,"Adult genre, adult top-5/top-10 tags, explicit name or manual list"
+Remove duplicate appid,85162,85162,0,Same Steam id listed twice
+Remove duplicate editions,85162,84970,192,Editions sharing an identical review pool (same name or same developer)
+Remove invalid dates,84970,84970,0,Release date could not be parsed
+Keep releases 2020–2024,84970,54159,30811,Recent market; 2024 games are used only as a robustness check

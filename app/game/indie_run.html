@@ -1,0 +1,764 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Indie Run</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1e2140; }
+  /* the 4 px padding right/bottom reserves room for the canvas shadow when centring */
+  body { display: flex; align-items: center; justify-content: center;
+         box-sizing: border-box; padding: 0 4px 4px 0;
+         touch-action: none; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; background: #1e2140; outline: none; cursor: pointer;
+           border: 3px solid #0b0d1f; box-shadow: 4px 4px 0 #0b0d1f;
+           image-rendering: crisp-edges; image-rendering: pixelated; }
+</style>
+</head>
+<body>
+<canvas id="game" tabindex="0" aria-label="Indie Run, an endless runner game"></canvas>
+<script>
+// Real numbers from the clean data. The dashboard replaces everything between the two
+// markers; the values below are only a fallback for opening this file on its own.
+window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022": 5991, "2023": 8194, "2024": 12266}, "indie_hit_rate": 4.2, "overall_hit_rate": 5.0, "few_reviews_pct": 43.1, "top_subgenres": [{"name": "Cozy", "hit_rate": 19.8, "games": 96}, {"name": "Colony Sim", "hit_rate": 13.7, "games": 212}, {"name": "Management", "hit_rate": 12.6, "games": 676}], "powerups": {"multiplayer": 7.9, "single_player": 3.4, "languages_10plus": 16.0, "one_language": 1.6, "cozy": 19.8}}/*END_GAME_DATA*/;
+</script>
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------- setup
+  const D = window.GAME_DATA;
+  const W = 288, H = 162, GROUND = 138, PX = 40, STEP = 1 / 60;
+  const GRAVITY = 1000, JUMP_V = 300, DOUBLE_V = 265;  // single jump: 45 px high, 0.6 s in the air
+  const LEVEL_TIME = 30, EASY_TIME = 10;
+  const PAL = {
+    bg: "#1e2140", panel: "#2a2e57", text: "#f4f1de", muted: "#b8b5d6", grid: "#3a3f6e",
+    purple: "#9f7aea", teal: "#22a884", orange: "#e8663d", blue: "#3b8fe0", yellow: "#ffd23f",
+    ink: "#0b0d1f", far: "#262a52",
+  };
+  const REDUCED = !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const YEARS = Object.keys(D.releases).sort();
+  const REL = YEARS.map(y => D.releases[y]);
+
+  const cv = document.getElementById("game");
+  const ctx = cv.getContext("2d");
+  cv.width = W; cv.height = H;
+  ctx.imageSmoothingEnabled = false;
+
+  // Fit the canvas inside the iframe viewport ("contain"), keep 16:9, never wider than
+  // MAX_W css px. FRAME = canvas border (2 x 3 px) + hard shadow (4 px), so nothing is clipped.
+  const MAX_W = 1000, FRAME = 10;
+  function fit() {
+    const k = Math.max(0.1, Math.min((innerWidth - FRAME) / W, (innerHeight - FRAME) / H, MAX_W / W));
+    cv.style.width = Math.floor(W * k) + "px";
+    cv.style.height = Math.floor(H * k) + "px";
+  }
+  addEventListener("resize", fit);
+  fit();
+
+  const fmtInt = n => Math.round(n).toLocaleString("en-US");
+  const pct = x => (x == null ? "?" : Number(x).toFixed(1));
+  const rand = (a, b) => a + Math.random() * (b - a);
+  function seeded(seed) {
+    return function () {
+      seed = (seed + 0x6D2B79F5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // ---------------------------------------------------------------- pixel font (mostly 3x5)
+  const GLYPHS = {
+    A: "010101111101101", B: "110101110101110", C: "011100100100011", D: "110101101101110",
+    E: "111100110100111", F: "111100110100100", G: "011100101101011", H: "101101111101101",
+    I: "111010010010111", J: "001001001101010", K: "101101110101101", L: "100100100100111",
+    M: "101111101101101", N: "110101101101101", O: "010101101101010", P: "110101110100100",
+    Q: "010101101110011", R: "110101110101101", S: "011100010001110", T: "111010010010010",
+    U: "101101101101111", V: "101101101101010", W: "101101111111101", X: "101101010101101",
+    Y: "101101010010010", Z: "111001010100111",
+    0: "111101101101111", 1: "010110010010111", 2: "110001010100111", 3: "110001010001110",
+    4: "101101111001001", 5: "111100110001110", 6: "011100110101010", 7: "111001010010010",
+    8: "010101010101010", 9: "010101011001110",
+    ".": "000000000000010", ":": "000010000010000",
+    "-": "000000111000000", "+": "000010111010000",
+    "!": "010010010000010", "?": "110001010000010", "/": "001001010100100",
+    "'": "010010000000000", "(": "001010010010001", ")": "100010010010100",
+    ">": "100010001010100", "<": "001010100010001", "=": "000111000111000",
+    "&": "010101010101011", "$": "011110010011110",
+  };
+  GLYPHS["—"] = GLYPHS["-"];   // em dash
+  GLYPHS["–"] = GLYPHS["-"];   // en dash
+
+  // Wider or taller glyphs, rows separated by "|" (a 3x5 "%" reads as "Z", a comma as "/")
+  GLYPHS["%"] = "11001|11010|00100|01011|10011";
+  GLYPHS[","] = "000|000|000|000|010|100";
+  for (const ch in GLYPHS) {
+    const g = GLYPHS[ch];
+    GLYPHS[ch] = g.includes("|") ? g.split("|") : g.match(/.{3}/g);
+  }
+  const advance = ch => (GLYPHS[ch] ? GLYPHS[ch][0].length : 3) + 1;
+
+  function textW(s, k = 1) {
+    let w = 0;
+    for (const ch of String(s).toUpperCase()) w += advance(ch);
+    return Math.max(0, (w - 1) * k);
+  }
+  function text(str, x, y, col, k = 1, align = "left") {
+    str = String(str).toUpperCase();
+    if (align === "center") x -= Math.floor(textW(str, k) / 2);
+    else if (align === "right") x -= textW(str, k);
+    ctx.fillStyle = col;
+    for (const ch of str) {
+      const rows = GLYPHS[ch];
+      if (rows) rows.forEach((r, j) => {
+        for (let i = 0; i < r.length; i++) if (r[i] === "1") ctx.fillRect(x + i * k, y + j * k, k, k);
+      });
+      x += advance(ch) * k;
+    }
+  }
+  function shadowText(str, x, y, col, k = 1, align = "left") {
+    text(str, x + k, y + k, PAL.ink, k, align);
+    text(str, x, y, col, k, align);
+  }
+  function wrap(str, max) {
+    const lines = [];
+    let line = "";
+    for (const word of str.split(" ")) {
+      if (line && (line + " " + word).length > max) { lines.push(line); line = word; }
+      else line = line ? line + " " + word : word;
+    }
+    if (line) lines.push(line);
+    return lines;
+  }
+
+  // ---------------------------------------------------------------- pixel art
+  const CMAP = { k: PAL.ink, y: PAL.yellow, f: PAL.text, p: PAL.purple, t: PAL.teal,
+                 b: PAL.blue, o: PAL.orange, m: PAL.muted };
+  function sprite(rows) {
+    const c = document.createElement("canvas");
+    c.width = rows[0].length; c.height = rows.length;
+    const x = c.getContext("2d");
+    rows.forEach((r, j) => {
+      for (let i = 0; i < r.length; i++) {
+        if (CMAP[r[i]]) { x.fillStyle = CMAP[r[i]]; x.fillRect(i, j, 1, 1); }
+      }
+    });
+    return c;
+  }
+  // The developer: yellow hair, purple hoodie, blue jeans (10 x 13)
+  const BODY = ["...yyyy...", "..yyyyyy..", "..yfffkf..", "..yfffff..", "...ffff...",
+                "..pppppp..", ".pppppppp.", "fppptpppf.", ".pppppp...", "..bbbbb..."];
+  const RUN = [
+    sprite(BODY.concat([".bb...bb..", "bb.....bb.", "kk.....kk."])),
+    sprite(BODY.concat(["...bbb....", "...bb.....", "...kk....."])),
+    sprite(BODY.concat(["..bb.bb...", "..bb.bb...", "..kk.kk..."])),
+  ];
+  const JUMP = sprite(BODY.concat([".bbb.bbb..", ".kk...kk..", ".........."]));
+  const SLIDE = sprite(["..yyy.........", ".yyyyy........", ".yffkf........",
+                        "..ffpppppp....", "..ppppptpbbbb.", "...pppppbbbbbk",
+                        "............kk"]);
+  const BUG_TOP = ["..m.....m..", "...m...m...", "..ooooooo..", ".ooyoooyoo.", ".ooooooooo.",
+                   "ooooooooooo", ".ooooooooo."];
+  const BUG = [sprite(BUG_TOP.concat([".m.m...m.m."])), sprite(BUG_TOP.concat(["m...m.m...m"]))];
+  const STAR = sprite(["..y..", ".yyy.", "yyyyy", ".yyy.", ".y.y."]);
+  const STAR_SHINE = sprite(["..f..", ".yfy.", "yfffy", ".yfy.", ".y.y."]);
+
+  // Power-ups: hit-related factors from the data (shown on pickup with their real hit rate)
+  const POW = {
+    shield: { name: "MULTIPLAYER", effect: "SHIELD", col: PAL.teal, dur: 10,
+              fact: "MULTIPLAYER INDIE GAMES: " + pct(D.powerups.multiplayer) + "% HITS",
+              icon: sprite(["..f...f..", ".fff.fff.", "..f...f..", ".........", ".ttt.ttt.",
+                            "ttttttttt", "ttttttttt", ".........", "........."]) },
+    magnet: { name: "LOCALIZATION", effect: "STAR MAGNET", col: PAL.blue, dur: 8,
+              fact: "INDIE GAMES IN 10+ LANGUAGES: " + pct(D.powerups.languages_10plus) + "% HITS",
+              icon: sprite([".........", ".bbbbbbb.", "bbbbbbbbb", "bb.....bb", "bb.....bb",
+                            "bb.....bb", "ff.....ff", "ff.....ff", "........."]) },
+    cozy:   { name: "COZY", effect: "SLOW MOTION", col: PAL.purple, dur: 5,
+              fact: "COZY INDIE GAMES: " + pct(D.powerups.cozy) + "% HITS",
+              icon: sprite(["..m.m....", "...m.m...", "..m.m....", ".........", "pppppp...",
+                            "pppppppp.", "pppppp.p.", "pppppppp.", ".pppp...."]) },
+  };
+  const POW_KEYS = Object.keys(POW);
+
+  // Parallax layers, drawn once: a far city and nearer server racks
+  const TILE = 512;
+  const far = document.createElement("canvas");
+  const mid = document.createElement("canvas");
+  const LEDS = [];
+  far.width = mid.width = TILE; far.height = mid.height = H;
+  (function () {
+    const c = far.getContext("2d"), r = seeded(7);
+    let x = 0;
+    while (x < TILE) {
+      const w = Math.min(14 + Math.floor(r() * 18), TILE - x), h = 26 + Math.floor(r() * 56);
+      c.fillStyle = PAL.far;
+      c.fillRect(x, GROUND - h, w, h);
+      for (let wy = GROUND - h + 4; wy < GROUND - 4; wy += 5) {
+        for (let wx = x + 3; wx < x + w - 3; wx += 4) {
+          const q = r();
+          if (q < 0.4) { c.fillStyle = q < 0.08 ? PAL.yellow : PAL.grid; c.fillRect(wx, wy, 1, 2); }
+        }
+      }
+      x += w + 1 + Math.floor(r() * 4);
+    }
+    const m = mid.getContext("2d"), r2 = seeded(11);
+    x = 10;
+    while (x < TILE - 34) {
+      const w = 20 + Math.floor(r2() * 8), h = 36 + Math.floor(r2() * 28), top = GROUND - h;
+      m.fillStyle = PAL.ink; m.fillRect(x - 1, top - 1, w + 2, h + 1);
+      m.fillStyle = PAL.panel; m.fillRect(x, top, w, h);
+      for (let sy = top + 3; sy < GROUND - 6; sy += 6) {
+        m.fillStyle = PAL.grid; m.fillRect(x + 2, sy, w - 4, 4);
+        m.fillStyle = PAL.ink; m.fillRect(x + 3, sy + 1, w - 10, 2);
+        LEDS.push({ x: x + w - 5, y: sy + 1, k: Math.floor(r2() * 100) });
+      }
+      x += w + 14 + Math.floor(r2() * 40);
+    }
+  })();
+  const SKY = [];
+  (function () {
+    const r = seeded(3);
+    for (let i = 0; i < 36; i++) SKY.push({ x: Math.floor(r() * W), y: 14 + Math.floor(r() * 60), k: r() * 10 });
+  })();
+
+  // ---------------------------------------------------------------- best score
+  let memoryBest = 0;
+  function loadBest() {
+    try { return parseInt(localStorage.getItem("indieRunBest") || "0", 10) || 0; }
+    catch (e) { return memoryBest; }
+  }
+  function saveBest(v) {
+    memoryBest = v;
+    try { localStorage.setItem("indieRunBest", String(v)); } catch (e) { /* storage blocked */ }
+  }
+
+  // ---------------------------------------------------------------- game state
+  let state = "title";            // title | play | paused | dying | over
+  let g = null, p = null, stateT = 0, clock = 0, titleScroll = 0;
+  let best = loadBest(), newBest = false, fact = "";
+  const input = { jumpHeld: false, slideHeld: false };
+
+  const levelName = L => (L < YEARS.length ? YEARS[L] : "ENDLESS");
+  function levelText(L, up) {
+    if (L >= YEARS.length) return "LEVEL UP: ENDLESS — SPEED KEEPS RISING";
+    return (up ? "LEVEL UP: " : "") + YEARS[L] + " — " + fmtInt(REL[L]) + " INDIE GAMES RELEASED";
+  }
+  // Difficulty follows the real number of Indie releases in that year
+  function busyness(L) {
+    const i = Math.min(L, YEARS.length - 1);
+    const extra = L >= YEARS.length ? Math.min(1.3, 1 + 0.05 * (L - YEARS.length + 1)) : 1;
+    return { ratio: REL[i] / REL[0], extra: extra };
+  }
+  const speedFor = L => { const b = busyness(L); return 100 * Math.sqrt(b.ratio) * b.extra; };
+  const densityFor = L => { const b = busyness(L); return Math.pow(b.ratio, 0.7) * b.extra; };
+  const score = () => Math.floor(g.dist / 8) + g.stars * 10;
+
+  function reset() {
+    g = { dist: 0, simT: 0, L: 0, levelT: 0, speed: speedFor(0), stars: 0,
+          obs: [], items: [], parts: [], floats: [], nextX: PX + 260, nextPowerT: 12,
+          shield: 0, magnet: 0, cozy: 0, invuln: 0, shake: 0, deadT: 0,
+          banner: { text: levelText(0, false), t: 3 }, toast: null };
+    p = { y: GROUND, vy: 0, onGround: true, jumps: 2, coyote: 0, buffer: 0, slideT: 0,
+          fastFall: 0, anim: 0 };
+  }
+  function start() {
+    reset();
+    state = "play"; stateT = 0; newBest = false;
+    input.jumpHeld = input.slideHeld = false;
+    try { cv.focus(); } catch (e) { /* ignore */ }
+  }
+  function pause() {
+    if (state !== "play") return;
+    state = "paused";
+    input.jumpHeld = input.slideHeld = false;
+  }
+  function resume() {
+    if (state === "paused") state = "play";
+  }
+
+  // ---------------------------------------------------------------- spawning (always fair)
+  function spawnAhead() {
+    while (g.nextX < g.dist + W + 40) {
+      const arriveT = g.simT + (g.nextX - g.dist - PX) / g.speed;
+      const easy = arriveT < EASY_TIME;           // the first 10 seconds: bugs only, wide gaps
+      const spd = Math.max(g.speed, speedFor(g.L));
+      let type = "bug";
+      if (!easy) {
+        const r = Math.random();
+        type = r < 0.42 ? "bug" : r < 0.72 ? "gap" : "crunch";
+      }
+      // A gap is never wider than a single jump can clear with time to spare
+      const w = type === "bug" ? 11
+        : type === "gap" ? Math.round(rand(22, Math.max(24, Math.min(58, 0.38 * g.speed))))
+        : Math.round(rand(28, 40));
+      const o = { type: type, x: g.nextX, w: w, dead: false };
+      g.obs.push(o);
+      starsFor(o);
+      // Free run after every obstacle: at least 0.7 s of reaction time at the current speed
+      let space = Math.max(spd * 0.7 + 18, (170 / densityFor(g.L)) * rand(0.75, 1.35));
+      if (easy) space *= 1.7;
+      fillSegment(o.x + w, o.x + w + space, arriveT);
+      g.nextX = o.x + w + space;
+    }
+  }
+  function addStar(x, y) { g.items.push({ kind: "star", x: x, y: y, taken: false }); }
+  function starsFor(o) {
+    if (Math.random() > 0.6) return;
+    const midX = o.x + o.w / 2 - 2;
+    if (o.type === "bug") {
+      addStar(midX - 14, GROUND - 20); addStar(midX, GROUND - 30); addStar(midX + 14, GROUND - 20);
+    } else if (o.type === "gap") {
+      addStar(midX - 16, GROUND - 26); addStar(midX, GROUND - 36); addStar(midX + 16, GROUND - 26);
+    } else {
+      addStar(o.x + 4, GROUND - 6); addStar(midX, GROUND - 6); addStar(o.x + o.w - 9, GROUND - 6);
+    }
+  }
+  function fillSegment(a, b, arriveT) {
+    const len = b - a, midX = (a + b) / 2;
+    if (len < 70) return;
+    if (arriveT > g.nextPowerT) {
+      const kind = POW_KEYS[Math.floor(Math.random() * POW_KEYS.length)];
+      g.items.push({ kind: "power", p: kind, x: midX - 6, y: GROUND - 28, taken: false });
+      g.nextPowerT = arriveT + rand(14, 22);
+      return;
+    }
+    if (Math.random() < 0.55) {
+      const n = 3 + Math.floor(Math.random() * 3), rowW = (n - 1) * 10 + 5;
+      if (len - 40 < rowW) return;
+      const y = Math.random() < 0.35 ? GROUND - 30 : GROUND - 9;
+      for (let i = 0; i < n; i++) addStar(midX - rowW / 2 + i * 10, y);
+    }
+  }
+
+  // ---------------------------------------------------------------- update
+  function gapAt(wx) {
+    for (const o of g.obs) if (o.type === "gap" && wx > o.x + 2 && wx < o.x + o.w - 2) return o;
+    return null;
+  }
+  function burst(x, y, col, n, power) {
+    for (let i = 0; i < n && g.parts.length < 240; i++) {
+      const a = Math.random() * Math.PI * 2, s = rand(20, power || 90);
+      g.parts.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 20,
+                     life: rand(0.3, 0.7), col: col });
+    }
+  }
+  function floatText(str, x, y, col) { g.floats.push({ text: str, x: x, y: y, col: col, t: 0.8 }); }
+  function shake(n) { if (!REDUCED) g.shake = Math.max(g.shake, n); }
+
+  function land() {
+    p.y = GROUND; p.vy = 0; p.onGround = true; p.jumps = 2;
+    if (input.slideHeld) p.slideT = Math.max(p.slideT, 0.1);
+  }
+  function fallInPit() {
+    if (g.shield > 0) {             // MULTIPLAYER shield: a teammate throws you back up
+      g.shield = 0; g.invuln = 1;
+      p.y = GROUND + 4; p.vy = -JUMP_V * 1.05; p.jumps = 1;
+      burst(PX + 5, GROUND, PAL.teal, 14);
+      floatText("SAVED!", PX - 4, GROUND - 24, PAL.teal);
+      shake(3);
+    } else die();
+  }
+  function updatePlayer(dt) {
+    p.anim += dt * g.speed / 9;
+    p.coyote -= dt; p.buffer -= dt; p.fastFall -= dt;
+    if (p.onGround && gapAt(g.dist + PX + 5)) { p.onGround = false; p.coyote = 0.08; }
+    if (!p.onGround && p.coyote <= 0 && p.jumps === 2) p.jumps = 1;
+    if (p.buffer > 0 && p.jumps > 0) {
+      p.vy = p.jumps === 2 ? -JUMP_V : -DOUBLE_V;
+      p.jumps--; p.buffer = 0; p.coyote = 0; p.onGround = false; p.slideT = 0;
+      burst(PX + 5, p.y, p.jumps === 0 ? PAL.purple : PAL.muted, 5, 40);
+    }
+    if (input.slideHeld && p.onGround) p.slideT = Math.max(p.slideT, 0.1);
+    p.slideT -= dt;
+    if (!p.onGround) {
+      const prev = p.y;
+      const fast = (input.slideHeld || p.fastFall > 0) ? 2.4 : 1;
+      p.vy += GRAVITY * fast * dt;
+      p.y += p.vy * dt;
+      if (p.vy >= 0 && p.y >= GROUND) {
+        const gap = gapAt(g.dist + PX + 5);
+        if (!gap && prev <= GROUND + 5) land();
+        else if (p.y > GROUND + 5) fallInPit();
+      }
+    }
+  }
+  function playerBox() {
+    const sliding = p.onGround && p.slideT > 0;
+    return sliding ? { x: PX + 1, y: p.y - 6, w: 11, h: 6 } : { x: PX + 2, y: p.y - 12, w: 6, h: 12 };
+  }
+  const overlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+
+  function updateItems(dt) {
+    const box = playerBox();
+    const pcx = g.dist + box.x + box.w / 2, pcy = box.y + box.h / 2;
+    for (const it of g.items) {
+      if (it.taken) continue;
+      if (it.kind === "star" && g.magnet > 0) {          // LOCALIZATION magnet
+        const dx = pcx - (it.x + 2), dy = pcy - (it.y + 2), d = Math.hypot(dx, dy);
+        if (d < 80 && d > 0.5) { const s = Math.min(d, 230 * dt); it.x += dx / d * s; it.y += dy / d * s; }
+      }
+      const size = it.kind === "star" ? 5 : 13;
+      if (!overlap(box, { x: it.x - g.dist, y: it.y, w: size, h: size })) continue;
+      it.taken = true;
+      const sx = it.x - g.dist + size / 2, sy = it.y + size / 2;
+      if (it.kind === "star") {
+        g.stars++;
+        burst(sx, sy, PAL.yellow, 8, 70);
+        floatText("+10", sx - 5, sy - 8, PAL.yellow);
+      } else {
+        const P = POW[it.p];
+        g[it.p] = P.dur;
+        burst(sx, sy, P.col, 16, 100);
+        g.toast = { title: P.name + ": " + P.effect, fact: P.fact, col: P.col, t: 2.4 };
+      }
+    }
+  }
+  function hit(o) {
+    if (g.invuln > 0) return;
+    const sx = o.x - g.dist + Math.min(o.w, 11) / 2;
+    if (g.shield > 0) {
+      g.shield = 0; g.invuln = 1; o.dead = true;
+      burst(sx, GROUND - 6, PAL.teal, 16);
+      floatText("BLOCKED!", PX - 8, GROUND - 26, PAL.teal);
+      shake(3);
+    } else die();
+  }
+  function collide() {
+    const box = playerBox();
+    for (const o of g.obs) {
+      if (o.dead || o.type === "gap") continue;
+      const sx = o.x - g.dist;
+      if (sx > box.x + 20 || sx + o.w < box.x - 4) continue;
+      const ob = o.type === "bug" ? { x: sx + 1, y: GROUND - 7, w: 9, h: 7 }
+                                  : { x: sx + 1, y: 0, w: o.w - 2, h: GROUND - 10 };
+      if (overlap(box, ob)) { hit(o); if (state !== "play") return; }
+    }
+  }
+  function die() {
+    state = "dying";
+    g.deadT = 0.9;
+    p.vy = -220; p.onGround = false;
+    burst(PX + 5, p.y - 6, PAL.orange, 26, 120);
+    shake(8);
+  }
+  function gameOver() {
+    const s = score();
+    newBest = s > best;
+    if (newBest) { best = s; saveBest(s); }
+    const top = D.top_subgenres[0];
+    const facts = [
+      "ONLY " + pct(D.indie_hit_rate) + "% OF INDIE GAMES BECOME HITS (TOP 5% OF REVIEWS IN THEIR YEAR).",
+      pct(D.few_reviews_pct) + "% OF GAMES GET FEWER THAN 10 REVIEWS.",
+      "INDIE HIT RATE: " + pct(D.indie_hit_rate) + "% VS " + pct(D.overall_hit_rate) + "% FOR ALL GAMES.",
+      "ONE PLAYER AWAY? MULTIPLAYER INDIE GAMES HIT " + pct(D.powerups.multiplayer) + "% OF THE TIME, SINGLE-PLAYER " + pct(D.powerups.single_player) + "%.",
+    ];
+    if (top) facts.push(top.name + " HAS THE BEST INDIE HIT RATE: " + pct(top.hit_rate) + "% (" + fmtInt(top.games) + " GAMES).");
+    if (g.L < YEARS.length) facts.push("YOU REACHED " + YEARS[g.L] + ": " + fmtInt(REL[g.L]) + " INDIE GAMES WERE RELEASED THAT YEAR.");
+    let next = facts[Math.floor(Math.random() * facts.length)];
+    if (next === fact) next = facts[(facts.indexOf(next) + 1) % facts.length];
+    fact = next;
+    state = "over"; stateT = 0;
+  }
+  function updateParticles(dt) {
+    for (const q of g.parts) { q.vy += 220 * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; }
+    g.parts = g.parts.filter(q => q.life > 0);
+    for (const f of g.floats) { f.y -= 20 * dt; f.t -= dt; }
+    g.floats = g.floats.filter(f => f.t > 0);
+  }
+
+  function update(rdt) {
+    stateT += rdt;
+    if (state === "title") { titleScroll += 40 * rdt; return; }
+    if (state === "paused" || state === "over") return;
+    const dt = rdt * (g.cozy > 0 ? 0.6 : 1);        // COZY slows the whole game
+    for (const k of ["shield", "magnet", "cozy", "invuln"]) g[k] = Math.max(0, g[k] - rdt);
+    if (g.banner && (g.banner.t -= rdt) <= 0) g.banner = null;
+    if (g.toast && (g.toast.t -= rdt) <= 0) g.toast = null;
+    g.shake = Math.max(0, g.shake - rdt * 30);
+    updateParticles(dt);
+    if (state === "dying") {
+      p.vy += GRAVITY * rdt; p.y += p.vy * rdt;
+      if ((g.deadT -= rdt) <= 0) gameOver();
+      return;
+    }
+    g.simT += dt; g.levelT += dt;
+    if (g.levelT >= LEVEL_TIME) {
+      g.levelT -= LEVEL_TIME; g.L++;
+      g.banner = { text: levelText(g.L, true), t: 3 };
+    }
+    g.speed += (speedFor(g.L) - g.speed) * Math.min(1, dt * 1.2);
+    g.dist += g.speed * dt;
+    spawnAhead();
+    updatePlayer(dt);
+    if (state !== "play") return;
+    updateItems(dt);
+    collide();
+    g.obs = g.obs.filter(o => o.x + o.w > g.dist - 20);
+    g.items = g.items.filter(it => !it.taken && it.x + 13 > g.dist - 20);
+  }
+
+  // ---------------------------------------------------------------- render
+  function drawBackground(dist) {
+    for (const s of SKY) {
+      ctx.fillStyle = Math.floor(clock * 1.5 + s.k) % 7 === 0 ? PAL.text : PAL.grid;
+      ctx.fillRect(s.x, s.y, 1, 1);
+    }
+    const fo = -Math.floor(dist * 0.15) % TILE, mo = -Math.floor(dist * 0.4) % TILE;
+    ctx.drawImage(far, fo, 0); ctx.drawImage(far, fo + TILE, 0);
+    for (const off of [mo, mo + TILE]) {
+      if (off > W || off + TILE < 0) continue;
+      ctx.drawImage(mid, off, 0);
+      for (const l of LEDS) {
+        const x = off + l.x;
+        if (x < -2 || x > W) continue;
+        const c = Math.floor(clock * 3 + l.k) % 6;
+        if (c > 2) continue;
+        ctx.fillStyle = [PAL.teal, PAL.orange, PAL.blue][c];
+        ctx.fillRect(x, l.y, 2, 2);
+      }
+    }
+  }
+  function drawGround(dist) {
+    ctx.fillStyle = PAL.panel; ctx.fillRect(0, GROUND, W, H - GROUND);
+    ctx.fillStyle = PAL.purple; ctx.fillRect(0, GROUND, W, 1);
+    ctx.fillStyle = PAL.grid;
+    const o1 = -Math.floor(dist) % 16;
+    for (let x = o1; x < W; x += 16) { ctx.fillRect(x, GROUND + 6, 8, 1); ctx.fillRect(x + 8, GROUND + 14, 8, 1); }
+    if (!g || state === "title") return;
+    for (const o of g.obs) {
+      if (o.type !== "gap") continue;
+      const sx = Math.round(o.x - dist);
+      if (sx > W || sx + o.w < 0) continue;
+      ctx.fillStyle = PAL.ink; ctx.fillRect(sx, GROUND, o.w, H - GROUND);
+      ctx.fillStyle = PAL.muted; ctx.fillRect(sx - 1, GROUND, 1, H - GROUND); ctx.fillRect(sx + o.w, GROUND, 1, H - GROUND);
+      text(o.w >= 38 ? "0 REVIEWS" : "0", sx + Math.floor(o.w / 2), GROUND + 9, PAL.muted, 1, "center");
+    }
+  }
+  function drawObstacles() {
+    for (const o of g.obs) {
+      if (o.dead || o.type === "gap") continue;
+      const sx = Math.round(o.x - g.dist);
+      if (sx > W || sx + o.w < 0) continue;
+      if (o.type === "bug") { ctx.drawImage(BUG[Math.floor(clock * 8) % 2], sx, GROUND - 8); continue; }
+      const h = GROUND - 10;                        // CRUNCH: a low ceiling bar, slide under it
+      ctx.fillStyle = PAL.ink; ctx.fillRect(sx - 1, 0, o.w + 2, h + 1);
+      ctx.fillStyle = PAL.orange; ctx.fillRect(sx, 0, o.w, h);
+      ctx.save(); ctx.beginPath(); ctx.rect(sx, 0, o.w, h); ctx.clip();
+      ctx.fillStyle = PAL.ink;
+      for (let y = 0; y < h - 10; y++) {
+        for (let x = sx - (y % 8) - 8; x < sx + o.w; x += 8) ctx.fillRect(x, y, 3, 1);
+      }
+      ctx.restore();
+      ctx.fillStyle = PAL.ink; ctx.fillRect(sx, h - 10, o.w, 10);
+      text("CRUNCH", sx + Math.floor(o.w / 2), h - 7, PAL.yellow, 1, "center");
+    }
+  }
+  function drawItems() {
+    for (const it of g.items) {
+      if (it.taken) continue;
+      const sx = Math.round(it.x - g.dist);
+      if (sx > W || sx < -14) continue;
+      if (it.kind === "star") {
+        const shine = Math.floor(clock * 4 + it.x * 0.1) % 6 === 0;
+        ctx.drawImage(shine ? STAR_SHINE : STAR, sx, Math.round(it.y));
+      } else {
+        const P = POW[it.p], y = Math.round(it.y + Math.sin(clock * 4) * 1.5);
+        ctx.fillStyle = Math.floor(clock * 4) % 2 ? PAL.yellow : P.col;
+        ctx.fillRect(sx, y, 13, 13);
+        ctx.fillStyle = PAL.ink; ctx.fillRect(sx + 1, y + 1, 11, 11);
+        ctx.drawImage(P.icon, sx + 2, y + 2);
+      }
+    }
+  }
+  function drawPlayer() {
+    if (g.invuln > 0 && state === "play" && Math.floor(clock * 20) % 2) return;
+    const y = Math.round(p.y);
+    if (state === "play" && p.onGround && p.slideT > 0) ctx.drawImage(SLIDE, PX - 1, y - 7);
+    else if (!p.onGround || state === "dying") ctx.drawImage(JUMP, PX, y - 13);
+    else ctx.drawImage(RUN[[0, 1, 2, 1][Math.floor(p.anim) % 4]], PX, y - 13);
+    if (g.shield > 0 && (g.shield > 2 || Math.floor(clock * 8) % 2)) {
+      const b = playerBox(), x0 = b.x - 4, y0 = b.y - 4, w = b.w + 8, hh = b.h + 6;
+      ctx.fillStyle = PAL.teal;
+      ctx.fillRect(x0 + 2, y0, w - 4, 1); ctx.fillRect(x0 + 2, y0 + hh, w - 4, 1);
+      ctx.fillRect(x0, y0 + 2, 1, hh - 3); ctx.fillRect(x0 + w - 1, y0 + 2, 1, hh - 3);
+      ctx.fillRect(x0 + 1, y0 + 1, 1, 1); ctx.fillRect(x0 + w - 2, y0 + 1, 1, 1);
+      ctx.fillRect(x0 + 1, y0 + hh - 1, 1, 1); ctx.fillRect(x0 + w - 2, y0 + hh - 1, 1, 1);
+    }
+  }
+  function drawEffects() {
+    for (const q of g.parts) { ctx.fillStyle = q.col; ctx.fillRect(Math.round(q.x), Math.round(q.y), 1, 1); }
+    for (const f of g.floats) shadowText(f.text, Math.round(f.x), Math.round(f.y), f.col);
+  }
+  const pad = n => String(n).padStart(6, "0");
+  function drawHUD() {
+    ctx.fillStyle = "rgba(11, 13, 31, 0.6)"; ctx.fillRect(0, 0, W, 11);
+    const s = score();
+    shadowText("SCORE " + pad(s), 4, 3, PAL.text);
+    shadowText("YEAR " + levelName(g.L), W / 2, 3, PAL.yellow, 1, "center");
+    shadowText("BEST " + pad(Math.max(best, s)), W - 4, 3, PAL.text, 1, "right");
+    let x = 4;
+    for (const k of POW_KEYS) {
+      if (g[k] <= 0) continue;
+      const P = POW[k];
+      shadowText(P.name, x, 14, P.col);
+      x += textW(P.name) + 3;
+      ctx.fillStyle = PAL.ink; ctx.fillRect(x, 14, 26, 5);
+      ctx.fillStyle = P.col; ctx.fillRect(x + 1, 15, Math.ceil(24 * g[k] / P.dur), 3);
+      x += 32;
+    }
+    if (g.banner) {
+      const w = textW(g.banner.text) + 12;
+      const x0 = Math.floor((W - w) / 2);
+      ctx.fillStyle = PAL.ink; ctx.fillRect(x0, 26, w, 13);
+      ctx.fillStyle = PAL.yellow; ctx.fillRect(x0, 26, w, 1); ctx.fillRect(x0, 38, w, 1);
+      ctx.fillRect(x0, 26, 1, 13); ctx.fillRect(x0 + w - 1, 26, 1, 13);
+      text(g.banner.text, W / 2, 30, PAL.yellow, 1, "center");
+    }
+    if (g.toast) {
+      const t = g.toast, w = Math.max(textW(t.title), textW(t.fact)) + 12;
+      const x0 = Math.floor((W - w) / 2), y0 = 44;
+      ctx.fillStyle = PAL.ink; ctx.fillRect(x0, y0, w, 20);
+      ctx.fillStyle = t.col; ctx.fillRect(x0, y0, w, 1); ctx.fillRect(x0, y0 + 19, w, 1);
+      text(t.title, W / 2, y0 + 4, t.col, 1, "center");
+      text(t.fact, W / 2, y0 + 11, PAL.text, 1, "center");
+    }
+  }
+  function dim(a) { ctx.fillStyle = "rgba(11, 13, 31, " + a + ")"; ctx.fillRect(0, 0, W, H); }
+  const blink = () => Math.floor(clock * 2.5) % 2 === 0;
+
+  function drawTitle() {
+    ctx.drawImage(RUN[[0, 1, 2, 1][Math.floor(clock * 10) % 4]], PX, GROUND - 13);
+    dim(0.35);
+    shadowText("INDIE RUN", W / 2, 18, PAL.yellow, 4, "center");
+    text("A STEAM SURVIVAL RUN, 2020 — 2024", W / 2, 44, PAL.muted, 1, "center");
+    if (blink()) shadowText("PRESS START", W / 2, 58, PAL.yellow, 2, "center");
+    shadowText("CLICK TO FOCUS, SPACE TO JUMP", W / 2, 78, PAL.text, 1, "center");
+    text("SPACE / UP / W: JUMP, PRESS TWICE TO DOUBLE JUMP", W / 2, 90, PAL.muted, 1, "center");
+    text("DOWN / S: SLIDE      P: PAUSE", W / 2, 98, PAL.muted, 1, "center");
+    text("TOUCH: TAP = JUMP, SWIPE DOWN = SLIDE", W / 2, 106, PAL.muted, 1, "center");
+    if (best > 0) shadowText("BEST " + pad(best), W / 2, 118, PAL.teal, 1, "center");
+  }
+  function drawPaused() {
+    dim(0.6);
+    shadowText("PAUSED", W / 2, 52, PAL.yellow, 3, "center");
+    text("PRESS P OR CLICK TO RESUME", W / 2, 80, PAL.text, 1, "center");
+  }
+  function drawOver() {
+    dim(0.72);
+    shadowText("GAME OVER", W / 2, 12, PAL.orange, 4, "center");
+    shadowText("SCORE " + score(), W / 2, 40, PAL.text, 2, "center");
+    text("BEST " + best + (newBest ? "   NEW BEST!" : ""), W / 2, 56, newBest && blink() ? PAL.yellow : PAL.muted, 1, "center");
+    text("YEAR REACHED: " + levelName(g.L) + "     STARS: " + g.stars, W / 2, 64, PAL.muted, 1, "center");
+    const lines = wrap(fact, 60), bh = lines.length * 8 + 16, y0 = 76;
+    const bw = Math.max.apply(null, lines.map(l => textW(l))) + 16, x0 = Math.floor((W - bw) / 2);
+    ctx.fillStyle = PAL.panel; ctx.fillRect(x0, y0, bw, bh);
+    ctx.fillStyle = PAL.yellow; ctx.fillRect(x0, y0, bw, 1); ctx.fillRect(x0, y0 + bh - 1, bw, 1);
+    ctx.fillRect(x0, y0, 1, bh); ctx.fillRect(x0 + bw - 1, y0, 1, bh);
+    text("REAL DATA", W / 2, y0 + 4, PAL.yellow, 1, "center");
+    lines.forEach((l, i) => text(l, W / 2, y0 + 12 + i * 8, PAL.text, 1, "center"));
+    if (stateT > 0.6 && blink()) shadowText("PRESS SPACE OR TAP TO RESTART", W / 2, 140, PAL.yellow, 1, "center");
+  }
+
+  function render() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = PAL.bg; ctx.fillRect(0, 0, W, H);
+    const playing = state !== "title";
+    const sh = playing && g.shake > 0 && !REDUCED ? g.shake * 0.5 : 0;
+    ctx.translate(Math.round(rand(-sh, sh)), Math.round(rand(-sh, sh)));
+    const dist = playing ? g.dist : titleScroll;
+    drawBackground(dist);
+    drawGround(dist);
+    if (playing) { drawItems(); drawObstacles(); drawPlayer(); drawEffects(); }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (!playing) { drawTitle(); return; }
+    drawHUD();
+    if (state === "paused") drawPaused();
+    if (state === "over") drawOver();
+  }
+
+  // ---------------------------------------------------------------- input
+  const JUMP_KEYS = new Set(["Space", "ArrowUp", "KeyW"]);
+  const SLIDE_KEYS = new Set(["ArrowDown", "KeyS"]);
+  function startSlide(t) {
+    p.slideT = Math.max(p.slideT, t);
+    if (!p.onGround) p.fastFall = 0.5;
+  }
+  function tapAction() {
+    if (state === "title") start();
+    else if (state === "over") { if (stateT > 0.6) start(); }
+    else if (state === "paused") resume();
+    else if (state === "play") p.buffer = 0.12;
+  }
+  addEventListener("keydown", e => {
+    const c = e.code, isJump = JUMP_KEYS.has(c), isSlide = SLIDE_KEYS.has(c);
+    if (isJump || isSlide || c === "KeyP") e.preventDefault();
+    if (e.repeat) return;
+    if (state === "title" || state === "over") { if (isJump || c === "Enter") tapAction(); return; }
+    if (state === "paused") { if (c === "KeyP" || isJump) resume(); return; }
+    if (state !== "play") return;
+    if (c === "KeyP") { pause(); return; }
+    if (isJump) { input.jumpHeld = true; p.buffer = 0.12; }
+    if (isSlide) { input.slideHeld = true; startSlide(0.45); }
+  });
+  addEventListener("keyup", e => {
+    if (JUMP_KEYS.has(e.code)) {
+      input.jumpHeld = false;
+      if (state === "play" && p.vy < -130) p.vy = -130;   // short tap = short hop
+    }
+    if (SLIDE_KEYS.has(e.code)) input.slideHeld = false;
+  });
+  cv.addEventListener("mousedown", e => {
+    e.preventDefault();
+    try { window.focus(); cv.focus(); } catch (err) { /* ignore */ }
+    tapAction();
+  });
+  let touch = null;
+  cv.addEventListener("touchstart", e => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    touch = { y: t.clientY, swiped: false };
+  }, { passive: false });
+  cv.addEventListener("touchmove", e => {
+    e.preventDefault();
+    if (!touch || touch.swiped) return;
+    if (e.changedTouches[0].clientY - touch.y > 24) {
+      touch.swiped = true;
+      if (state === "play") startSlide(0.7);
+    }
+  }, { passive: false });
+  cv.addEventListener("touchend", e => {
+    e.preventDefault();
+    const swiped = touch && touch.swiped;
+    touch = null;
+    if (!swiped) tapAction();
+  }, { passive: false });
+  // Pause automatically when the game loses focus
+  addEventListener("blur", pause);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) pause(); });
+
+  // ---------------------------------------------------------------- main loop (fixed timestep)
+  let last = performance.now(), acc = 0;
+  function frame(now) {
+    acc += Math.min(0.25, Math.max(0, (now - last) / 1000));
+    last = now;
+    while (acc >= STEP) { clock += STEP; update(STEP); acc -= STEP; }
+    render();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // Read-only hook for automated tests
+  window.INDIE_RUN = {
+    get state() { return state; },
+    get score() { return g ? score() : 0; },
+    get year() { return g ? levelName(g.L) : null; },
+    get ahead() {
+      const o = g && g.obs.find(o => !o.dead && o.x + o.w - g.dist > PX);
+      return o ? { type: o.type, dx: o.x - g.dist - (PX + 10), w: o.w } : null;
+    },
+  };
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,85 @@
+{
+  "rows": {
+    "study": 36689,
+    "train": 29351,
+    "test": 7338
+  },
+  "features": [
+    "n_platforms",
+    "is_indie",
+    "is_early_access",
+    "is_multiplayer",
+    "price_band",
+    "release_month",
+    "genres_core",
+    "subgenres"
+  ],
+  "best_C": 0.03,
+  "cv_grid": [
+    {
+      "C": 0.01,
+      "cv_auc": 0.8303,
+      "cv_std": 0.0089,
+      "train_auc": 0.8374
+    },
+    {
+      "C": 0.03,
+      "cv_auc": 0.831,
+      "cv_std": 0.0085,
+      "train_auc": 0.8398
+    },
+    {
+      "C": 0.1,
+      "cv_auc": 0.831,
+      "cv_std": 0.0081,
+      "train_auc": 0.841
+    },
+    {
+      "C": 0.3,
+      "cv_auc": 0.8308,
+      "cv_std": 0.0078,
+      "train_auc": 0.8414
+    },
+    {
+      "C": 1,
+      "cv_auc": 0.8308,
+      "cv_std": 0.0077,
+      "train_auc": 0.8416
+    },
+    {
+      "C": 3,
+      "cv_auc": 0.8307,
+      "cv_std": 0.0077,
+      "train_auc": 0.8416
+    }
+  ],
+  "cv_auc_mean": 0.831,
+  "cv_auc_std": 0.009,
+  "train_auc": 0.839,
+  "test": {
+    "roc_auc": 0.838,
+    "average_precision": 0.279,
+    "brier": 0.0412,
+    "base_rate_pct": 5.0,
+    "top10_hit_rate_pct": 24.8,
+    "threshold": 0.1246,
+    "confusion": {
+      "tn": 6431,
+      "fp": 540,
+      "fn": 188,
+      "tp": 179
+    },
+    "precision_at_threshold": 0.249,
+    "recall_at_threshold": 0.488
+  },
+  "overfit_gap": 0.001,
+  "overfit_flag": false,
+  "time_check": {
+    "train_years": "2020\u20132022",
+    "test_year": 2023,
+    "best_C": 0.03,
+    "roc_auc": 0.824,
+    "average_precision": 0.27
+  },
+  "indie_base_rate_pct": 4.19
+}

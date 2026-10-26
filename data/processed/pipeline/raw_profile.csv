@@ -1,0 +1,48 @@
+column,dtype,missing_pct,unique_values,example
+appid,int64,0.0,94948,1145360
+name,object,0.0,94191,Hades
+release_date,object,0.0,4464,2020-09-17
+required_age,int64,0.0,16,0
+price,float64,0.0,616,24.99
+dlc_count,int64,0.0,102,1
+detailed_description,object,5.7,89149,ALSO FROM SUPERGIANT GAMES The god-like rogue-like returns! About the Game Hade…
+about_the_game,object,5.7,89113,Hades is a god-like rogue-like dungeon crawler that combines the best aspects o…
+short_description,object,5.6,88657,Defy the god of the dead as you hack and slash out of the Underworld in this ro…
+reviews,object,89.0,10303,“Hades is a one-of-a-kind rogue-lite that does a brilliant job of marrying its …
+header_image,object,0.0,94892,https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1145360/head…
+website,object,56.6,33360,http://www.supergiantgames.com
+support_url,object,53.5,29335,https://www.supergiantgames.com/contact/
+support_email,object,17.0,48193,support@supergiantgames.com
+windows,bool,0.0,2,True
+mac,bool,0.0,2,True
+linux,bool,0.0,2,False
+metacritic_score,int64,0.0,69,93
+metacritic_url,object,96.2,3518,https://www.metacritic.com/game/pc/hades?ftag=MCD-06-10aaa1f
+achievements,int64,0.0,433,49
+recommendations,int64,0.0,4672,255416
+notes,object,82.5,13952,The game has a realistic atmosphere. Player characters can die through various …
+supported_languages,object,5.7,14571,"['English', 'French', 'Italian', 'German', 'Spanish - Spain', 'Korean', 'Portug…"
+full_audio_languages,object,58.0,2884,"['English', 'Japanese']"
+packages,object,20.1,75803,"[{'title': 'Buy Hades', 'description': '', 'subs': [{'text': 'Hades - $24.99', …"
+developers,object,5.7,56502,['Supergiant Games']
+publishers,object,6.1,49819,['Supergiant Games']
+categories,object,6.2,7475,"['Single-player', 'Steam Achievements', 'Full controller support', 'Steam Tradi…"
+genres,object,5.7,2689,"['Action', 'Indie', 'RPG']"
+screenshots,object,3.6,91439,['https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1145360/ss…
+movies,object,8.1,87234,['http://video.akamai.steamstatic.com/store_trailers/256801252/movie_max.mp4?t=…
+user_score,int64,0.0,30,0
+score_rank,float64,100.0,3,
+positive,int64,0.0,5116,271755
+negative,int64,0.0,2549,4795
+estimated_owners,object,0.0,15,5000000 - 10000000
+average_playtime_forever,int64,0.0,1853,2538
+average_playtime_2weeks,int64,0.0,418,270
+median_playtime_forever,int64,0.0,1641,1336
+median_playtime_2weeks,int64,0.0,421,365
+discount,int64,0.0,86,0
+peak_ccu,int64,0.0,1181,4062
+tags,object,23.3,70498,"{'Action Roguelike': 1298, 'Rogue-lite': 933, 'Hack and Slash': 916, 'Indie': 9…"
+pct_pos_total,int64,0.0,102,98
+num_reviews_total,int64,0.0,5481,255511
+pct_pos_recent,int64,0.0,95,96
+num_reviews_recent,int64,0.0,875,1400

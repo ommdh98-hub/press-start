@@ -1,0 +1,9 @@
+appid,name,is_indie,few_reviews,review_count,rating_pct,owners_low,owners_high,genres_core,subgenres,n_languages,price_band,is_hit,quadrant
+1145360,Hades,True,False,255511,98.0,5000000,10000000,Action|RPG,Roguelike|Roguelite,11,$20+,True,Popular & Loved
+892970,Valheim,True,False,417655,94.0,20000000,50000000,Action|Adventure|RPG,Survival|Open World,14,$10–20,True,Popular & Loved
+1966720,Lethal Company,True,False,387146,97.0,10000000,20000000,Action|Adventure,Horror,1,$5–10,True,Popular & Loved
+1794680,Vampire Survivors,True,False,234756,98.0,5000000,10000000,Action|Casual|RPG,Roguelike|Bullet Hell|Roguelite,13,Under $5,True,Popular & Loved
+1245620,ELDEN RING,False,False,749606,92.0,20000000,50000000,Action|RPG,Souls-like|Open World|Action RPG,15,$20+,True,Popular & Loved
+739630,Phasmophobia,True,False,616505,96.0,10000000,20000000,Action,Horror,26,$10–20,True,Popular & Loved
+1086940,Baldur's Gate 3,False,False,648637,96.0,20000000,50000000,Adventure|RPG|Strategy,,15,$20+,True,Popular & Loved
+331430,Toby's Island,True,True,0,,0,20000,Adventure|Casual|RPG|Strategy,Farming Sim|Turn-Based Strategy,1,$5–10,False,Not enough reviews
