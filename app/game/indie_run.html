@@ -58,9 +58,11 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   const TU = YEARS.length;                       // level index of the final TUWAIQ ACADEMY level
 
   const cv = document.getElementById("game");
-  const ctx = cv.getContext("2d");
+  const screen = cv.getContext("2d");
+  let ctx = screen;               // the drawing helpers draw here; pre-rendering points it elsewhere
   cv.width = W; cv.height = H;
   ctx.imageSmoothingEnabled = false;
+  function drawInto(c, fn) { const old = ctx; ctx = c.getContext("2d"); fn(); ctx = old; return c; }
 
   // Fit the canvas inside the iframe viewport ("contain"), keep 16:9, never wider than
   // MAX_W css px. FRAME = canvas border (2 x 3 px) + hard shadow (4 px), so nothing is clipped.
@@ -145,22 +147,62 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     for (const ch of String(s).toUpperCase()) w += advance(ch);
     return Math.max(0, (w - 1) * k);
   }
-  function text(str, x, y, col, k = 1, align = "left") {
-    str = String(str).toUpperCase();
-    if (align === "center") x -= Math.floor(textW(str, k) / 2);
-    else if (align === "right") x -= textW(str, k);
-    ctx.fillStyle = col;
-    for (const ch of str) {
-      const rows = GLYPHS[ch];
-      if (rows) rows.forEach((r, j) => {
-        for (let i = 0; i < r.length; i++) if (r[i] === "1") ctx.fillRect(x + i * k, y + j * k, k, k);
-      });
+  // Text is never drawn pixel by pixel while playing. Each glyph is drawn once per colour and
+  // size (shadow baked in for shadowText) into a tiny canvas; a whole string is then built
+  // once from those and cached. Strings that change every frame (score, best) pass live = true
+  // and are copied glyph by glyph instead of filling the cache.
+  const GLYPH_CACHE = [{}, {}];
+  function glyphCanvas(ch, col, k, shadow) {
+    const root = GLYPH_CACHE[shadow ? 1 : 0];
+    const byCol = root[col] || (root[col] = {});
+    const byK = byCol[k] || (byCol[k] = {});
+    let c = byK[ch];
+    if (c === undefined) {
+      const rows = GLYPHS[ch], e = shadow ? k : 0;
+      c = byK[ch] = rows ? mk(rows[0].length * k + e, rows.length * k + e) : null;
+      if (c) {
+        const x = c.getContext("2d");
+        const paint = (dx, fill) => {
+          x.fillStyle = fill;
+          rows.forEach((r, j) => {
+            for (let i = 0; i < r.length; i++) if (r[i] === "1") x.fillRect(dx + i * k, dx + j * k, k, k);
+          });
+        };
+        if (shadow) paint(k, PAL.ink);
+        paint(0, col);
+      }
+    }
+    return c;
+  }
+  function paintText(c2, str, x, y, col, k, shadow) {
+    for (let n = 0; n < str.length; n++) {
+      const ch = str[n], gc = glyphCanvas(ch, col, k, shadow);
+      if (gc) c2.drawImage(gc, x, y);
       x += advance(ch) * k;
     }
   }
-  function shadowText(str, x, y, col, k = 1, align = "left") {
-    text(str, x + k, y + k, PAL.ink, k, align);
-    text(str, x, y, col, k, align);
+  const STR_CACHE = new Map();
+  function cachedText(str, col, k, shadow) {
+    const key = (shadow ? "#" : "") + k + col + str;
+    let c = STR_CACHE.get(key);
+    if (!c) {
+      if (STR_CACHE.size > 400) STR_CACHE.clear();
+      const e = shadow ? k : 0;
+      c = mk(Math.max(1, textW(str, k) + 1 + e), 6 * k + e);
+      paintText(c.getContext("2d"), str, 0, 0, col, k, shadow);
+      STR_CACHE.set(key, c);
+    }
+    return c;
+  }
+  function text(str, x, y, col, k = 1, align = "left", live = false, shadow = false) {
+    str = String(str).toUpperCase();
+    if (align === "center") x -= Math.floor(textW(str, k) / 2);
+    else if (align === "right") x -= textW(str, k);
+    if (live) paintText(ctx, str, x, y, col, k, shadow);
+    else ctx.drawImage(cachedText(str, col, k, shadow), x, y);
+  }
+  function shadowText(str, x, y, col, k = 1, align = "left", live = false) {
+    text(str, x, y, col, k, align, live, true);
   }
   function wrap(str, max) {
     const lines = [];
@@ -250,6 +292,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
                             "pppppppp.", "pppppp.p.", "pppppppp.", ".pppp...."]) },
   };
   const POW_KEYS = Object.keys(POW);
+  const TIMERS = ["shield", "magnet", "cozy", "invuln"];
 
   // ---------------------------------------------------------------- level themes
   // Every level has its own sky, far layer, near layer and ground, drawn once at start-up.
@@ -519,6 +562,13 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     T.farL = mk(TILE, H); T.midL = mk(TILE, H); T.leds = [];
     FAR[T.far](T.farL.getContext("2d"), seeded(7 + i * 13), T.farC);
     MID[T.mid](T.midL.getContext("2d"), seeded(11 + i * 17), T.midC, T.leds);
+    // the ground strip, one dash period (16 px) wider than the screen so it can scroll
+    T.groundL = mk(W + 16, H - GROUND);
+    const gx = T.groundL.getContext("2d");
+    gx.fillStyle = T.ground; gx.fillRect(0, 0, W + 16, H - GROUND);
+    gx.fillStyle = T.line; gx.fillRect(0, 0, W + 16, 1);
+    gx.fillStyle = T.dash;
+    for (let x = 0; x < W + 16; x += 16) { gx.fillRect(x, 6, 8, 1); gx.fillRect(x + 8, 14, 8, 1); }
   });
   const themeOf = L => THEMES[Math.min(L, THEMES.length - 1)];
   const SKY = [];
@@ -616,6 +666,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     },
     over: a => { notes(a, [392, 330, 262, 196], 0.14, "square", 0.11); tone(a, 0.56, 98, 65, 0.4, "triangle", 0.25); },
     blip: a => tone(a, 0, 660, 660, 0.05, "square", 0.07),
+    star: a => { tone(a, 0, 1320, 1320, 0.035, "square", 0.045); tone(a, 0.035, 1760, 1760, 0.06, "square", 0.045); },
   };
   let sfxPlayed = 0;
   function sfx(name) {
@@ -654,14 +705,14 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
 
   function reset() {
     g = { dist: 0, simT: 0, L: 0, levelT: 0, speed: speedFor(0), stars: 0, lives: LIVES,
-          obs: [], items: [], parts: [], floats: [], nextX: PX + 260, nextPowerT: 12,
-          lastEnd: 0, segStart: PX + 260,
+          obs: [], items: [], parts: [], floats: [], nextX: W + 30, nextPowerT: 12,
+          lastEnd: 0, segStart: W + 30,
           shield: 0, magnet: 0, cozy: 0, invuln: 0, shake: 0, deadT: 0,
           banner: { L: 0, t: 2.2 }, toast: null, fade: 0, fromL: 0,
-          tunnels: {}, spikes: {}, goalDone: false, endless: false, endlessT: 0, finished: false,
+          tunnels: {}, spikes: {}, rowN: 0, rowI: 0, goalDone: false, endless: false, endlessT: 0, finished: false,
           hits: 0, pits: 0, tunnelsPassed: 0, hopsCleared: 0 };
     p = { y: GROUND, vy: 0, onGround: true, jumps: 2, coyote: 0, buffer: 0, slideMin: 0,
-          fastFall: 0, anim: 0, hop: false, hopT: 0, wasSliding: false };
+          fastFall: 0, anim: 0, hop: false, hopT: 0, wasSliding: false, prevY: GROUND };
   }
   function clearInput() {
     input.jumpHeld = false; input.slideKeys.clear(); input.slideTouch = null; input.slideHeld = false;
@@ -704,8 +755,14 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     if (L >= 3 && Math.random() < 0.35) return 2;          // long double-bug tunnels from 2023
     return Math.random() < 0.6 ? 1 : 0;
   }
+  // Everything is created beyond the right edge. The stars and power-ups of a free run are
+  // only known once the obstacle that ends it is placed, so the next obstacle is placed while
+  // the free run in front of it still starts off screen (spawning used to wait for the
+  // obstacle itself, and the stars of its free run popped in right in front of the player).
+  const SPAWN_X = W + 40;
   function spawnAhead() {
-    while (g.nextX < g.dist + W + 40) {
+    if (g.segStart >= g.dist + SPAWN_X) return;
+    while (g.segStart < g.dist + SPAWN_X) {
       const arriveT = g.simT + (g.nextX - g.dist - PX) / g.speed;
       const L = levelAt(arriveT);
       const easy = arriveT < EASY_TIME;           // the first 10 seconds: bugs only, wide gaps
@@ -747,18 +804,31 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     }
     g.obs.sort((a, b) => a.x - b.x);
   }
-  function addStar(x, y) { g.items.push({ kind: "star", x: x, y: y, taken: false }); }
+  // Stars come in rows (a line, an arc or a single hint star); row + i let a test check that
+  // every row reaches the screen whole
+  function newRow() { g.rowN++; g.rowI = 0; }
+  function addStar(x, y) { g.items.push({ kind: "star", x: x, y: y, taken: false, row: g.rowN, i: g.rowI++ }); }
+  // A whole row of evenly spaced stars from a to b, or nothing: a row never loses a star
+  function starRow(a, b, step, y) {
+    const n = Math.floor((b - a - 5) / step) + 1;
+    if (n < 2) return;
+    newRow();
+    const x0 = (a + b - 5 - (n - 1) * step) / 2;
+    for (let i = 0; i < n; i++) addStar(x0 + i * step, y);
+  }
   function starsFor(o) {
     const midX = o.x + o.w / 2 - 2;
-    if (o.type === "tunnel") {                    // a low row of stars to collect while sliding
-      for (let x = o.x + 10; x < o.x + o.w - 10; x += 14) {
-        if (o.spikes.some(b => x > b.x - 26 && x < b.x + 20)) continue;
-        if (Math.random() < 0.7) addStar(x, GROUND - 5);
+    if (o.type === "tunnel") {                    // low rows of stars to collect while sliding
+      if (Math.random() < 0.7) {                  // whole rows between the floor bugs
+        let a = o.x + 10;
+        for (const b of o.spikes) { starRow(a, b.x - 21, 14, GROUND - 5); a = b.x + 20; }
+        starRow(a, o.x + o.w - 10, 14, GROUND - 5);
       }
-      for (const b of o.spikes) addStar(b.x, GROUND - 9);   // a hint above each floor bug
+      for (const b of o.spikes) { newRow(); addStar(b.x, GROUND - 9); }   // a hint above each floor bug
       return;
     }
     if (Math.random() > 0.6) return;
+    newRow();
     if (o.type === "bug") {
       addStar(midX - 14, GROUND - 20); addStar(midX, GROUND - 30); addStar(midX + 14, GROUND - 20);
     } else if (o.type === "gap") {
@@ -780,6 +850,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       const n = 3 + Math.floor(Math.random() * 3), rowW = (n - 1) * 10 + 5;
       if (len - 40 < rowW) return;
       const y = Math.random() < 0.35 ? GROUND - 30 : GROUND - 9;
+      newRow();
       for (let i = 0; i < n; i++) addStar(midX - rowW / 2 + i * 10, y);
     }
   }
@@ -792,16 +863,32 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   // Is the player under (or just about to enter) a low ceiling?
   function underCeiling() {
     const a = g.dist + PX, b = g.dist + PX + 18;
-    return g.obs.some(o => (o.type === "tunnel" || o.type === "crunch") && a < o.x + o.w && b > o.x);
+    for (const o of g.obs) if ((o.type === "tunnel" || o.type === "crunch") && a < o.x + o.w && b > o.x) return true;
+    return false;
   }
+  // Remove items from an array in place (no new array every step)
+  function compact(arr, keep, pool) {
+    let j = 0;
+    for (let i = 0; i < arr.length; i++) {
+      const v = arr[i];
+      if (keep(v)) arr[j++] = v; else if (pool) pool.push(v);
+    }
+    arr.length = j;
+  }
+  const PART_POOL = [];            // particles are reused
   function burst(x, y, col, n, power) {
     for (let i = 0; i < n && g.parts.length < 240; i++) {
       const a = Math.random() * Math.PI * 2, s = rand(20, power || 90);
-      g.parts.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 20,
-                     life: rand(0.3, 0.7), col: col });
+      const q = PART_POOL.pop() || {};
+      q.x = x; q.y = y; q.vx = Math.cos(a) * s; q.vy = Math.sin(a) * s - 20;
+      q.life = rand(0.3, 0.7); q.col = col;
+      g.parts.push(q);
     }
   }
   function floatText(str, x, y, col) { g.floats.push({ text: str, x: x, y: y, col: col, t: 0.8 }); }
+  // a quick expanding ring where a star was picked up
+  function pop(x, y, col) { g.floats.push({ pop: true, x: x, y: y, col: col, t: POP_T }); }
+  const POP_T = 0.18;
   function shake(n) { if (!REDUCED) g.shake = Math.max(g.shake, n); }
 
   const sliding = () => p.onGround && (input.slideHeld || p.slideMin > 0);
@@ -862,15 +949,23 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     if (s && !p.wasSliding && !p.hop) sfx("slide");
     p.wasSliding = s || p.hop;
   }
+  // Collision boxes are reused objects (no allocation per step); read them before the next call
+  const PBOX = { x: 0, y: 0, w: 0, h: 0 }, OBOX = { x: 0, y: 0, w: 0, h: 0 };
+  const IBOX = { x: 0, y: 0, w: 0, h: 0 }, SWEPT = { x: 0, y: 0, w: 0, h: 0 };
+  function setBox(b, x, y, w, h) { b.x = x; b.y = y; b.w = w; b.h = h; return b; }
   function playerBox() {
-    if (p.hop) return { x: PX + 1, y: p.y - 5, w: 10, h: 5 };
-    return sliding() ? { x: PX + 1, y: p.y - 6, w: 11, h: 6 } : { x: PX + 2, y: p.y - 12, w: 6, h: 12 };
+    if (p.hop) return setBox(PBOX, PX + 1, p.y - 5, 10, 5);
+    return sliding() ? setBox(PBOX, PX + 1, p.y - 6, 11, 6) : setBox(PBOX, PX + 2, p.y - 12, 6, 12);
   }
   const overlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
+  // Pickups are checked every fixed step against the area the player swept since the last
+  // step (the world moved g.speed * dt and the player moved from prevY), so a fast pass or a
+  // slow frame never skips a star
   function updateItems(dt) {
-    const box = playerBox();
-    const pcx = g.dist + box.x + box.w / 2, pcy = box.y + box.h / 2;
+    const b = playerBox(), dy = p.prevY - p.y, move = g.speed * dt;
+    const box = setBox(SWEPT, b.x - move, b.y + Math.min(0, dy), b.w + move, b.h + Math.abs(dy));
+    const pcx = g.dist + b.x + b.w / 2, pcy = b.y + b.h / 2;
     for (const it of g.items) {
       if (it.taken) continue;
       if (it.kind === "star" && g.magnet > 0) {          // LOCALIZATION magnet
@@ -878,13 +973,15 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
         if (d < 80 && d > 0.5) { const s = Math.min(d, 230 * dt); it.x += dx / d * s; it.y += dy / d * s; }
       }
       const size = it.kind === "star" ? 5 : 13;
-      if (!overlap(box, { x: it.x - g.dist, y: it.y, w: size, h: size })) continue;
+      if (!overlap(box, setBox(IBOX, it.x - g.dist, it.y, size, size))) continue;
       it.taken = true;
       const sx = it.x - g.dist + size / 2, sy = it.y + size / 2;
       if (it.kind === "star") {
         g.stars++;
+        pop(sx, sy, PAL.yellow);
         burst(sx, sy, PAL.yellow, 8, 70);
         floatText("+10", sx - 5, sy - 8, PAL.yellow);
+        sfx("star");
       } else {
         const P = POW[it.p];
         g[it.p] = P.dur;
@@ -921,9 +1018,9 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     loseLife();
   }
   function obstacleBox(o, sx) {
-    if (o.type === "bug") return { x: sx + 1, y: GROUND - 7, w: 9, h: 7 };
-    if (o.type === "spike") return { x: sx, y: GROUND - SPIKE_H, w: SPIKE_W, h: SPIKE_H };
-    return { x: sx + 1, y: 0, w: o.w - 2, h: CEIL };          // crunch bar or tunnel ceiling
+    if (o.type === "bug") return setBox(OBOX, sx + 1, GROUND - 7, 9, 7);
+    if (o.type === "spike") return setBox(OBOX, sx, GROUND - SPIKE_H, SPIKE_W, SPIKE_H);
+    return setBox(OBOX, sx + 1, 0, o.w - 2, CEIL);           // crunch bar or tunnel ceiling
   }
   function firstHit() {              // the obstacle the player is touching, or null
     const box = playerBox();
@@ -994,11 +1091,14 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       gameOver(true);
     }
   }
+  const alive = q => q.life > 0, showing = f => f.t > 0;
+  const keepObs = o => o.x + o.w > g.dist - 20;
+  const keepItem = it => !it.taken && it.x + 13 > g.dist - 20;
   function updateParticles(dt) {
     for (const q of g.parts) { q.vy += 220 * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; }
-    g.parts = g.parts.filter(q => q.life > 0);
-    for (const f of g.floats) { f.y -= 20 * dt; f.t -= dt; }
-    g.floats = g.floats.filter(f => f.t > 0);
+    compact(g.parts, alive, PART_POOL);
+    for (const f of g.floats) { if (!f.pop) f.y -= 20 * dt; f.t -= dt; }
+    compact(g.floats, showing);
   }
 
   // Time, level, speed, distance and spawning: everything that does not depend on the player
@@ -1019,7 +1119,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     if (state === "title") { titleScroll += 40 * rdt; return; }
     if (state === "paused" || state === "over" || state === "goal") return;
     const dt = rdt * (g.cozy > 0 ? 0.6 : 1);        // COZY slows the whole game
-    for (const k of ["shield", "magnet", "cozy", "invuln"]) g[k] = Math.max(0, g[k] - rdt);
+    for (const k of TIMERS) g[k] = Math.max(0, g[k] - rdt);
     if (g.banner && (g.banner.t -= rdt) <= 0) g.banner = null;
     if (g.toast && (g.toast.t -= rdt) <= 0) g.toast = null;
     g.fade = Math.max(0, g.fade - rdt);
@@ -1031,19 +1131,27 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       return;
     }
     advanceWorld(dt);
+    p.prevY = p.y;
     updatePlayer(dt);
     if (state !== "play") return;
     updateItems(dt);
     collide();
     if (state !== "play") return;
     countPassed();
-    g.obs = g.obs.filter(o => o.x + o.w > g.dist - 20);
-    g.items = g.items.filter(it => !it.taken && it.x + 13 > g.dist - 20);
+    compact(g.obs, keepObs);
+    compact(g.items, keepItem);
     // The 10,000 goal can only be reached on the final level, after its banner
     if (!g.goalDone && g.L >= TU && g.levelT > 2.6 && score() >= GOAL) reachGoal();
   }
 
   // ---------------------------------------------------------------- render
+  // A scrolling layer tile (TILE wide) drawn at off and off + TILE: only the visible columns
+  function drawLayer(img, off) {
+    for (let k = 0; k < 2; k++) {
+      const x = off + k * TILE, a = Math.max(0, -x), b = Math.min(TILE, W - x);
+      if (b > a) ctx.drawImage(img, a, 0, b - a, GROUND, x + a, 0, b - a, GROUND);
+    }
+  }
   function drawScene(T, dist, alpha) {
     ctx.globalAlpha = alpha;
     ctx.drawImage(T.skyC, 0, 0);
@@ -1054,10 +1162,10 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       }
     }
     const fo = -Math.floor(dist * 0.15) % TILE, mo = -Math.floor(dist * 0.4) % TILE;
-    ctx.drawImage(T.farL, fo, 0); ctx.drawImage(T.farL, fo + TILE, 0);
-    for (const off of [mo, mo + TILE]) {
+    drawLayer(T.farL, fo); drawLayer(T.midL, mo);
+    for (let k = 0; k < 2; k++) {
+      const off = mo + k * TILE;
       if (off > W || off + TILE < 0) continue;
-      ctx.drawImage(T.midL, off, 0);
       for (const l of T.leds) {
         const x = off + l.x;
         if (x < -2 || x > W || !T.lights.length) continue;
@@ -1067,11 +1175,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
         ctx.fillRect(x, l.y, l.s, l.s);
       }
     }
-    ctx.fillStyle = T.ground; ctx.fillRect(0, GROUND, W, H - GROUND);
-    ctx.fillStyle = T.line; ctx.fillRect(0, GROUND, W, 1);
-    ctx.fillStyle = T.dash;
-    const o1 = -Math.floor(dist) % 16;
-    for (let x = o1; x < W; x += 16) { ctx.fillRect(x, GROUND + 6, 8, 1); ctx.fillRect(x + 8, GROUND + 14, 8, 1); }
+    ctx.drawImage(T.groundL, -Math.floor(dist) % 16, GROUND);
     ctx.globalAlpha = 1;
   }
   function drawGaps(dist) {
@@ -1088,7 +1192,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       text(o.w >= 38 ? "0 REVIEWS" : "0", sx + Math.floor(o.w / 2), GROUND + 9, PAL.muted, 1, "center");
     }
   }
-  function drawCeiling(sx, w, label) {
+  function drawCeilingBody(sx, w) {
     const h = CEIL;                                // hazard stripes, slide under them
     ctx.fillStyle = PAL.ink; ctx.fillRect(sx - 1, 0, w + 2, h + 1);
     ctx.fillStyle = PAL.orange; ctx.fillRect(sx, 0, w, h);
@@ -1100,12 +1204,18 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     ctx.restore();
     ctx.fillStyle = PAL.ink; ctx.fillRect(sx, h - 10, w, 10);
     ctx.fillStyle = PAL.yellow; ctx.fillRect(sx, h - 1, w, 1);
-    // the label is repeated along long tunnels
+  }
+  // the label is repeated along long tunnels (only the copies that are on screen are drawn)
+  function ceilingLabels(sx, w, label) {
     const lw = textW(label), stepX = lw + 40, cx = sx + Math.floor(w / 2);
     const n = Math.max(0, Math.floor((w / 2 - lw / 2 - 4) / stepX));
-    for (let k = -n; k <= n; k++) text(label, cx + k * stepX, h - 8, PAL.yellow, 1, "center");
+    for (let k = -n; k <= n; k++) {
+      const x = cx + k * stepX;
+      if (x + lw / 2 < 0 || x - lw / 2 > W) continue;
+      text(label, x, CEIL - 8, PAL.yellow, 1, "center");
+    }
   }
-  function drawTunnel(sx, w) {                   // a dark brick block with a striped lip
+  function drawTunnelBody(sx, w) {               // a dark brick block with a striped lip
     const lip = CEIL - 16;
     ctx.fillStyle = PAL.ink; ctx.fillRect(sx - 1, 0, w + 2, CEIL + 1);
     ctx.fillStyle = "#34305a"; ctx.fillRect(sx, 0, w, lip);
@@ -1114,7 +1224,6 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       ctx.fillRect(sx, y, w, 1);
       for (let x = sx + ((y / 6) % 2 ? 6 : 0); x < sx + w; x += 12) ctx.fillRect(x, y - 5, 1, 5);
     }
-    ctx.fillStyle = "#4a4580"; ctx.fillRect(sx, 0, 2, lip); ctx.fillRect(sx + w - 2, 0, 2, lip);
     ctx.save(); ctx.beginPath(); ctx.rect(sx, lip, w, 6); ctx.clip();
     ctx.fillStyle = PAL.orange; ctx.fillRect(sx, lip, w, 6);
     ctx.fillStyle = PAL.ink;
@@ -1124,9 +1233,27 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     ctx.restore();
     ctx.fillStyle = PAL.ink; ctx.fillRect(sx, CEIL - 10, w, 10);
     ctx.fillStyle = PAL.yellow; ctx.fillRect(sx, CEIL - 1, w, 1);
-    const label = "CRUNCH TUNNEL", lw = textW(label), stepX = lw + 40, cx = sx + Math.floor(w / 2);
-    const n = Math.max(0, Math.floor((w / 2 - lw / 2 - 4) / stepX));
-    for (let k = -n; k <= n; k++) text(label, cx + k * stepX, CEIL - 8, PAL.yellow, 1, "center");
+  }
+  // Tunnel and crunch textures are drawn once at start-up as long strips (their patterns start
+  // at the left edge, like the old per-frame drawing); each frame copies only the visible part,
+  // then adds the edges and the labels
+  const STRIP_W = 1600;
+  const TUNNEL_STRIP = drawInto(mk(STRIP_W, CEIL + 1), () => drawTunnelBody(0, STRIP_W));
+  const CRUNCH_STRIP = drawInto(mk(STRIP_W, CEIL + 1), () => drawCeilingBody(0, STRIP_W));
+  function drawStripPart(img, sx, w) {
+    for (let at = 0; at < w; at += STRIP_W) {      // (longer than a strip: repeat it)
+      const a = Math.max(at, -sx), b = Math.min(w, at + STRIP_W, W - sx);
+      if (b > a) ctx.drawImage(img, a - at, 0, b - a, CEIL + 1, sx + a, 0, b - a, CEIL + 1);
+    }
+  }
+  function drawCeilingObstacle(o, sx) {
+    const lip = CEIL - 16;
+    drawStripPart(o.type === "crunch" ? CRUNCH_STRIP : TUNNEL_STRIP, sx, o.w);
+    ctx.fillStyle = PAL.ink; ctx.fillRect(sx - 1, 0, 1, CEIL + 1); ctx.fillRect(sx + o.w, 0, 1, CEIL + 1);
+    if (o.type === "tunnel") {
+      ctx.fillStyle = "#4a4580"; ctx.fillRect(sx, 0, 2, lip); ctx.fillRect(sx + o.w - 2, 0, 2, lip);
+    }
+    ceilingLabels(sx, o.w, o.type === "crunch" ? "CRUNCH" : "CRUNCH TUNNEL");
   }
   function drawObstacles() {
     for (const o of g.obs) {
@@ -1135,9 +1262,9 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       if (sx > W || sx + o.w < 0) continue;
       if (o.type === "bug") ctx.drawImage(BUG[Math.floor(clock * 8) % 2], sx - 1, GROUND - 9);
       else if (o.type === "spike") ctx.drawImage(SPIKE[Math.floor(clock * 8) % 2], sx - 1, GROUND - SPIKE_H - 1);
-      else if (o.type === "crunch") drawCeiling(sx, o.w, "CRUNCH");
       else {
-        drawTunnel(sx, o.w);
+        drawCeilingObstacle(o, sx);
+        if (o.type === "crunch") continue;
         if (!o.counted && sx > PX + 30) {          // a warning sign before the entrance
           text("HOLD", sx - 4, CEIL - 26, PAL.yellow, 1, "right");
           text("SLIDE", sx - 4, CEIL - 19, PAL.yellow, 1, "right");
@@ -1185,7 +1312,16 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   }
   function drawEffects() {
     for (const q of g.parts) { ctx.fillStyle = q.col; ctx.fillRect(Math.round(q.x), Math.round(q.y), 1, 1); }
-    for (const f of g.floats) shadowText(f.text, Math.round(f.x), Math.round(f.y), f.col);
+    for (const f of g.floats) {
+      if (!f.pop) { shadowText(f.text, Math.round(f.x), Math.round(f.y), f.col); continue; }
+      const r = Math.round(2 + 6 * (1 - f.t / POP_T)), x = Math.round(f.x), y = Math.round(f.y);
+      ctx.fillStyle = f.col;
+      ctx.fillRect(x - r, y, 2, 1); ctx.fillRect(x + r - 1, y, 2, 1);
+      ctx.fillRect(x, y - r, 1, 2); ctx.fillRect(x, y + r - 1, 1, 2);
+      ctx.fillStyle = PAL.text;
+      ctx.fillRect(x - r + 2, y - r + 2, 1, 1); ctx.fillRect(x + r - 2, y - r + 2, 1, 1);
+      ctx.fillRect(x - r + 2, y + r - 2, 1, 1); ctx.fillRect(x + r - 2, y + r - 2, 1, 1);
+    }
   }
   const pad = n => String(n).padStart(6, "0");
   const MUTE_BOX = { x: 2, y: H - 12, w: 13, h: 11 };
@@ -1196,8 +1332,8 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     ctx.fillStyle = "rgba(11, 13, 31, 0.75)"; ctx.fillRect(b.x, b.y, b.w, b.h);
     ctx.drawImage(muted ? SOUND_OFF : SOUND_ON, b.x + 2, b.y + 2);
   }
-  function drawBanner() {
-    const B = g.banner, T = themeOf(B.L);
+  function drawBanner(B) {
+    const T = themeOf(B.L);
     if (B.endless) {
       const w = 170, x0 = (W - w) / 2, y0 = 28;
       frameBox(x0, y0, w, 34, T.accent, "rgba(11, 13, 31, 0.88)");
@@ -1224,9 +1360,9 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     let logo = null;
     ctx.fillStyle = "rgba(11, 13, 31, 0.6)"; ctx.fillRect(0, 0, W, 11);
     const s = score();
-    shadowText("SCORE " + pad(s), 4, 3, PAL.text);
+    shadowText("SCORE " + pad(s), 4, 3, PAL.text, 1, "left", true);
     shadowText(g.L < TU ? "YEAR " + YEARS[g.L] : levelName(g.L), W / 2, 3, themeOf(g.L).accent, 1, "center");
-    shadowText("BEST " + pad(Math.max(best, s)), W - 4, 3, PAL.text, 1, "right");
+    shadowText("BEST " + pad(Math.max(best, s)), W - 4, 3, PAL.text, 1, "right", true);
     let x = 4;
     for (const k of POW_KEYS) {
       if (g[k] <= 0) continue;
@@ -1242,7 +1378,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       ctx.fillStyle = PAL.ink; ctx.fillRect(hx - 1, 13, 9, 8);
       ctx.drawImage(i < g.lives ? HEART : HEART_EMPTY, hx, 14);
     }
-    if (g.banner && state === "play") logo = drawBanner();
+    if (g.banner && state === "play") logo = drawBanner(g.banner);
     if (g.toast) {
       const t = g.toast, w = Math.max(textW(t.title), textW(t.fact)) + 12;
       const x0 = Math.floor((W - w) / 2), y0 = g.banner ? 98 : 44;
@@ -1478,6 +1614,12 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   // still runs at full speed, but after a stall the game slows down for a moment instead of
   // jumping ahead in one burst (the world used to leap up to 250 ms while nothing was drawn)
   const MAX_FRAME = 4 * STEP;
+  // Build the cached text of every banner and screen once at load, not in the middle of a run
+  drawInto(mk(W, H), () => {
+    for (let L = 0; L <= TU; L++) drawBanner({ L: L, t: 1 });
+    drawBanner({ L: TU, t: 1, endless: true });
+    drawTitle(); drawPaused();
+  });
   let last = performance.now(), acc = 0;
   function frame(now) {
     acc += Math.min(MAX_FRAME, Math.max(0, (now - last) / 1000));

@@ -1,5 +1,5 @@
 // Fairness check for INDIE RUN (app/game/indie_run.html). Plain Node, no packages:
-//   node tools/check_indie_run.js [seeds=500] [firstSeed=1] [--jobs=8]
+//   node tools/check_indie_run.js [seeds=500] [firstSeed=1] [--jobs=8] [--game=path/to/indie_run.html]
 // For every seed it runs the game's own generator through all year levels, the Tuwaiq level
 // and endless mode (at top speed, plus some seeds with the normal speed ramp), then searches
 // every input sequence (slide held or not, jump / slide hop pressed or not, decided every
@@ -10,7 +10,8 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-const GAME = path.join(__dirname, "..", "app", "game", "indie_run.html");
+const gameArg = process.argv.find(a => a.startsWith("--game="));
+const GAME = gameArg ? path.resolve(gameArg.slice(7)) : path.join(__dirname, "..", "app", "game", "indie_run.html");
 const html = fs.readFileSync(GAME, "utf8");
 const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
 
@@ -233,7 +234,7 @@ if (!isMainThread) {
   for (let j = 0; j < jobs; j++) {
     const a = first + Math.floor(N * j / jobs), b = first + Math.floor(N * (j + 1) / jobs);
     parts.push(new Promise((res, rej) => {
-      const w = new Worker(__filename, { workerData: { first: a, n: b - a } });
+      const w = new Worker(__filename, { workerData: { first: a, n: b - a }, argv: process.argv.slice(2) });
       w.on("message", res); w.on("error", rej);
     }));
   }
