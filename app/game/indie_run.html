@@ -13,14 +13,24 @@
   canvas { display: block; background: #1e2140; outline: none; cursor: pointer;
            border: 3px solid #0b0d1f; box-shadow: 4px 4px 0 #0b0d1f;
            image-rendering: crisp-edges; image-rendering: pixelated; }
+  /* The Tuwaiq Academy logo is shown as a normal image on a white plate over the canvas,
+     at full resolution (never redrawn, recoloured or pixelated) */
+  #logo { position: fixed; display: none; box-sizing: border-box; pointer-events: none;
+          background: #ffffff; border: 2px solid #0b0d1f;
+          align-items: center; justify-content: center; }
+  #logo img { display: block; width: 88%; height: 72%; object-fit: contain; }
 </style>
 </head>
 <body>
 <canvas id="game" tabindex="0" aria-label="Indie Run, an endless runner game"></canvas>
+<div id="logo"><img alt="Tuwaiq Academy logo"></div>
 <script>
 // Real numbers from the clean data. The dashboard replaces everything between the two
 // markers; the values below are only a fallback for opening this file on its own.
 window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022": 5991, "2023": 8194, "2024": 12266}, "indie_hit_rate": 4.2, "overall_hit_rate": 5.0, "few_reviews_pct": 43.1, "top_subgenres": [{"name": "Cozy", "hit_rate": 19.8, "games": 96}, {"name": "Colony Sim", "hit_rate": 13.7, "games": 212}, {"name": "Management", "hit_rate": 12.6, "games": 676}], "powerups": {"multiplayer": 7.9, "single_player": 3.4, "languages_10plus": 16.0, "one_language": 1.6, "cozy": 19.8}}/*END_GAME_DATA*/;
+// The dashboard writes the logo in here as a data URI (the iframe cannot load repo files);
+// opened on its own, the file falls back to the image next to it.
+window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
 </script>
 <script>
 (function () {
@@ -30,15 +40,22 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
   const D = window.GAME_DATA;
   const W = 288, H = 162, GROUND = 138, PX = 40, STEP = 1 / 60;
   const GRAVITY = 1000, JUMP_V = 300, DOUBLE_V = 265;  // single jump: 45 px high, 0.6 s in the air
-  const LEVEL_TIME = 30, EASY_TIME = 10;
+  const LEVEL_TIME = 15, EASY_TIME = 10, LIVES = 3, GOAL = 10000;
+  // Tunnels: the ceiling ends 11 px above the ground. Standing (12 px tall) hits it, sliding
+  // (6 px) fits. A slide hop lifts a 5 px tall body 4.5 px, so it clears a 3 px floor bug and
+  // never reaches the ceiling (4.5 + 5 < 11). It rises fast (above the bug within 0.02 s, so a
+  // press with the bug right in front still works), hangs, then drops: ~0.4 s over the bug.
+  const CEIL = GROUND - 11, SPIKE_H = 3, SPIKE_W = 6;
+  const HOP_H = 4.5, HOP_RISE = 150, HOP_HANG = 0.36, HOP_FALL_G = 600;
   const PAL = {
     bg: "#1e2140", panel: "#2a2e57", text: "#f4f1de", muted: "#b8b5d6", grid: "#3a3f6e",
     purple: "#9f7aea", teal: "#22a884", orange: "#e8663d", blue: "#3b8fe0", yellow: "#ffd23f",
-    ink: "#0b0d1f", far: "#262a52",
+    ink: "#0b0d1f", far: "#262a52", red: "#e8465a",
   };
   const REDUCED = !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
   const YEARS = Object.keys(D.releases).sort();
   const REL = YEARS.map(y => D.releases[y]);
+  const TU = YEARS.length;                       // level index of the final TUWAIQ ACADEMY level
 
   const cv = document.getElementById("game");
   const ctx = cv.getContext("2d");
@@ -47,7 +64,7 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
 
   // Fit the canvas inside the iframe viewport ("contain"), keep 16:9, never wider than
   // MAX_W css px. FRAME = canvas border (2 x 3 px) + hard shadow (4 px), so nothing is clipped.
-  const MAX_W = 1000, FRAME = 10;
+  const MAX_W = 1000, FRAME = 10, BORDER = 3;
   function fit() {
     const k = Math.max(0.1, Math.min((innerWidth - FRAME) / W, (innerHeight - FRAME) / H, MAX_W / W));
     cv.style.width = Math.floor(W * k) + "px";
@@ -67,6 +84,30 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
+  function mk(w, h) { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; }
+
+  // ---------------------------------------------------------------- logo (an <img> over the canvas)
+  const logoEl = document.getElementById("logo");
+  const logoImg = logoEl.querySelector("img");
+  let logoOk = false, logoShown = null, logoVisible = false;
+  logoImg.onload = () => { logoOk = true; };
+  logoImg.onerror = () => { logoOk = false; };
+  logoImg.src = window.TUWAIQ_LOGO || "assets/tuwaiq_logo.png";
+  // box = the white plate in canvas pixels, or null to hide it
+  function placeLogo(box) {
+    const key = box && logoOk ? [box.x, box.y, box.w, box.h, cv.style.width].join() : null;
+    if (key === logoShown) return;
+    logoShown = key;
+    logoVisible = !!key;
+    if (!key) { logoEl.style.display = "none"; return; }
+    const r = cv.getBoundingClientRect(), k = (r.width - 2 * BORDER) / W;
+    logoEl.style.left = (r.left + BORDER + box.x * k) + "px";
+    logoEl.style.top = (r.top + BORDER + box.y * k) + "px";
+    logoEl.style.width = (box.w * k) + "px";
+    logoEl.style.height = (box.h * k) + "px";
+    logoEl.style.display = "flex";
+  }
+  addEventListener("resize", () => { logoShown = "resize"; });
 
   // ---------------------------------------------------------------- pixel font (mostly 3x5)
   const GLYPHS = {
@@ -131,14 +172,21 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
     if (line) lines.push(line);
     return lines;
   }
+  function frameBox(x, y, w, h, col, fill) {
+    ctx.fillStyle = fill || PAL.ink; ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = col;
+    ctx.fillRect(x, y, w, 1); ctx.fillRect(x, y + h - 1, w, 1);
+    ctx.fillRect(x, y, 1, h); ctx.fillRect(x + w - 1, y, 1, h);
+  }
 
   // ---------------------------------------------------------------- pixel art
   const CMAP = { k: PAL.ink, y: PAL.yellow, f: PAL.text, p: PAL.purple, t: PAL.teal,
-                 b: PAL.blue, o: PAL.orange, m: PAL.muted };
+                 b: PAL.blue, o: PAL.orange, m: PAL.muted,
+                 w: "#fbfbf6", g: "#c4c8d6", r: "#d3213a", s: "#c98d5e", h: "#3a2416",
+                 e: "#22140c", n: "#6b4426", R: PAL.red, P: "#ff9aa8", K: "#4a4e7a",
+                 B: "#1f1d27", Q: "#3b3848", G: "#e0ac2e" };
   function sprite(rows) {
-    const c = document.createElement("canvas");
-    c.width = rows[0].length; c.height = rows.length;
-    const x = c.getContext("2d");
+    const c = mk(rows[0].length, rows.length), x = c.getContext("2d");
     rows.forEach((r, j) => {
       for (let i = 0; i < r.length; i++) {
         if (CMAP[r[i]]) { x.fillStyle = CMAP[r[i]]; x.fillRect(i, j, 1, 1); }
@@ -146,23 +194,45 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
     });
     return c;
   }
-  // The developer: yellow hair, purple hoodie, blue jeans (10 x 13)
-  const BODY = ["...yyyy...", "..yyyyyy..", "..yfffkf..", "..yfffff..", "...ffff...",
-                "..pppppp..", ".pppppppp.", "fppptpppf.", ".pppppp...", "..bbbbb..."];
+  // The same sprite with a 1 px dark outline (canvas 2 px larger; draw it at x - 1, y - 1)
+  function outlined(rows) {
+    const src = sprite(rows), c = mk(src.width + 2, src.height + 2), x = c.getContext("2d");
+    const sil = mk(src.width, src.height), s = sil.getContext("2d");
+    s.drawImage(src, 0, 0); s.globalCompositeOperation = "source-in";
+    s.fillStyle = PAL.ink; s.fillRect(0, 0, sil.width, sil.height);
+    for (const [dx, dy] of [[0, 1], [2, 1], [1, 0], [1, 2]]) x.drawImage(sil, dx, dy);
+    x.drawImage(src, 1, 1);
+    return c;
+  }
+  // The developer: a black bisht with thin gold trim, worn open over a white thobe, a
+  // red-and-white shemagh with a black agal, dark hair and eyes, brown sandals
+  // (10 x 13, same size and hitbox as before; B = bisht, Q = its highlight, G = gold trim)
+  const BODY = ["...kkkkk..", "..rwrwrwr.", ".rwhsssss.", ".wrhssses.", ".rwwssss..",
+                ".wrQGwwwG.", ".rBBGwwwG.", "sBBBGwgwGs", ".BBBGwgwG.", ".BBBGwgwG."];
   const RUN = [
-    sprite(BODY.concat([".bb...bb..", "bb.....bb.", "kk.....kk."])),
-    sprite(BODY.concat(["...bbb....", "...bb.....", "...kk....."])),
-    sprite(BODY.concat(["..bb.bb...", "..bb.bb...", "..kk.kk..."])),
+    outlined(BODY.concat([".BBBGwwG..", "gg.....gg.", "nn.....nn."])),
+    outlined(BODY.concat(["..BBGwwG..", "...gg.....", "...nn....."])),
+    outlined(BODY.concat(["..BBGwwG..", "..gg.gg...", "..nn.nn..."])),
   ];
-  const JUMP = sprite(BODY.concat([".bbb.bbb..", ".kk...kk..", ".........."]));
-  const SLIDE = sprite(["..yyy.........", ".yyyyy........", ".yffkf........",
-                        "..ffpppppp....", "..ppppptpbbbb.", "...pppppbbbbbk",
-                        "............kk"]);
+  const JUMP = outlined(BODY.concat([".BBBGwwG..", ".gg...gg..", ".nn....nn."]));
+  const SLIDE = outlined(["..kkkk........", ".rwrwrw.......", "rwhsss........",
+                          "wrhses........", ".rQGwwwwwwwG..", "BBBBBsBBBBBGgn",
+                          "............nn"]);
+  const HOP = outlined([".kkkk.......", "rwrwrw......", "whsesGwwwG..",
+                        "rQBBBsBBBGnn", "..........nn"]);
   const BUG_TOP = ["..m.....m..", "...m...m...", "..ooooooo..", ".ooyoooyoo.", ".ooooooooo.",
                    "ooooooooooo", ".ooooooooo."];
-  const BUG = [sprite(BUG_TOP.concat([".m.m...m.m."])), sprite(BUG_TOP.concat(["m...m.m...m"]))];
+  const BUG = [outlined(BUG_TOP.concat([".m.m...m.m."])), outlined(BUG_TOP.concat(["m...m.m...m"]))];
+  // A tiny floor bug that lives inside tunnels (6 x 3): slide hop over it
+  const SPIKE = [outlined([".oooo.", "oyooyo", "m.mm.m"]), outlined([".oooo.", "oyooyo", ".m..m."])];
   const STAR = sprite(["..y..", ".yyy.", "yyyyy", ".yyy.", ".y.y."]);
   const STAR_SHINE = sprite(["..f..", ".yfy.", "yfffy", ".yfy.", ".y.y."]);
+  const HEART = sprite([".RR.RR.", "RPRRRRR", "RRRRRRR", ".RRRRR.", "..RRR..", "...R..."]);
+  const HEART_EMPTY = sprite([".KK.KK.", "K..K..K", "K.....K", ".K...K.", "..K.K..", "...K..."]);
+  const SOUND_ON = sprite(["...f.....", "..ff...f.", "ffff.f..f", "ffff.f..f", "ffff.f..f",
+                           "..ff...f.", "...f....."]);
+  const SOUND_OFF = sprite(["...f.....", "..ff.....", "ffff.o.o.", "ffff..o..", "ffff.o.o.",
+                            "..ff.....", "...f....."]);
 
   // Power-ups: hit-related factors from the data (shown on pickup with their real hit rate)
   const POW = {
@@ -181,49 +251,284 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
   };
   const POW_KEYS = Object.keys(POW);
 
-  // Parallax layers, drawn once: a far city and nearer server racks
+  // ---------------------------------------------------------------- level themes
+  // Every level has its own sky, far layer, near layer and ground, drawn once at start-up.
   const TILE = 512;
-  const far = document.createElement("canvas");
-  const mid = document.createElement("canvas");
-  const LEDS = [];
-  far.width = mid.width = TILE; far.height = mid.height = H;
-  (function () {
-    const c = far.getContext("2d"), r = seeded(7);
-    let x = 0;
-    while (x < TILE) {
-      const w = Math.min(14 + Math.floor(r() * 18), TILE - x), h = 26 + Math.floor(r() * 56);
-      c.fillStyle = PAL.far;
-      c.fillRect(x, GROUND - h, w, h);
-      for (let wy = GROUND - h + 4; wy < GROUND - 4; wy += 5) {
-        for (let wx = x + 3; wx < x + w - 3; wx += 4) {
-          const q = r();
-          if (q < 0.4) { c.fillStyle = q < 0.08 ? PAL.yellow : PAL.grid; c.fillRect(wx, wy, 1, 2); }
+  const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+  const hexRGB = h => { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+  function skyCanvas(cols) {                       // a dithered vertical gradient
+    const c = mk(W, GROUND), x = c.getContext("2d"), img = x.createImageData(W, GROUND);
+    const rgb = cols.map(hexRGB);
+    for (let y = 0; y < GROUND; y++) {
+      const t = y / (GROUND - 1) * (cols.length - 1);
+      const i = Math.min(cols.length - 2, Math.floor(t)), f = t - i;
+      for (let xx = 0; xx < W; xx++) {
+        const c2 = f > (BAYER[(y & 3) * 4 + (xx & 3)] + 0.5) / 16 ? rgb[i + 1] : rgb[i];
+        const k = (y * W + xx) * 4;
+        img.data[k] = c2[0]; img.data[k + 1] = c2[1]; img.data[k + 2] = c2[2]; img.data[k + 3] = 255;
+      }
+    }
+    x.putImageData(img, 0, 0);
+    return c;
+  }
+  // Periodic helpers (periods divide TILE so the layers tile seamlessly)
+  const wave = (x, period, phase) => Math.sin((x / period + phase) * Math.PI * 2);
+  const tri = (x, period, phase) => { const t = ((x / period + phase) % 1 + 1) % 1; return 1 - Math.abs(2 * t - 1); };
+
+  const FAR = {
+    city(c, r, T) {                                // office blocks with lit windows
+      let x = 0;
+      while (x < TILE) {
+        const w = Math.min(14 + Math.floor(r() * 18), TILE - x), h = 26 + Math.floor(r() * 56);
+        c.fillStyle = T.far; c.fillRect(x, GROUND - h, w, h);
+        for (let wy = GROUND - h + 4; wy < GROUND - 4; wy += 5) {
+          for (let wx = x + 3; wx < x + w - 3; wx += 4) {
+            const q = r();
+            if (q < 0.4) { c.fillStyle = q < 0.08 ? T.lit : T.win; c.fillRect(wx, wy, 1, 2); }
+          }
+        }
+        x += w + 1 + Math.floor(r() * 4);
+      }
+    },
+    hills(c, r, T) {                               // rolling hills with a lighter rim
+      for (let x = 0; x < TILE; x++) {
+        const h = Math.round(34 + 12 * wave(x, 256, 0) + 7 * wave(x, 64, 0.3) + 3 * wave(x, 32, 0.1));
+        c.fillStyle = T.far; c.fillRect(x, GROUND - h, 1, h);
+        c.fillStyle = T.farTop; c.fillRect(x, GROUND - h, 1, 2);
+      }
+    },
+    dunes(c, r, T) {                               // two rows of sand dunes
+      for (let x = 0; x < TILE; x++) {
+        const h1 = Math.round(40 + 10 * wave(x, 128, 0.2) + 5 * wave(x, 64, 0.7));
+        const h2 = Math.round(20 + 8 * wave(x, 256, 0.5) + 4 * wave(x, 32, 0));
+        c.fillStyle = T.far; c.fillRect(x, GROUND - h1, 1, h1);
+        c.fillStyle = T.farTop; c.fillRect(x, GROUND - h2, 1, h2);
+      }
+    },
+    mountains(c, r, T) {                           // sharp peaks with snow caps
+      for (let x = 0; x < TILE; x++) {
+        const h = Math.round(22 + 46 * tri(x, 128, 0) * (0.65 + 0.35 * tri(x, 512, 0.25)) + 8 * tri(x, 32, 0.5));
+        c.fillStyle = T.far; c.fillRect(x, GROUND - h, 1, h);
+        if (h > 48) { c.fillStyle = T.farTop; c.fillRect(x, GROUND - h, 1, Math.min(8, h - 46)); }
+      }
+    },
+    towers(c, r, T) {                              // a dense wall of tall, busy towers
+      let x = 0;
+      while (x < TILE) {
+        const w = Math.min(8 + Math.floor(r() * 10), TILE - x), h = 40 + Math.floor(r() * 70);
+        c.fillStyle = T.far; c.fillRect(x, GROUND - h, w, h);
+        for (let wy = GROUND - h + 3; wy < GROUND - 3; wy += 4) {
+          for (let wx = x + 2; wx < x + w - 2; wx += 3) {
+            const q = r();
+            if (q < 0.6) { c.fillStyle = q < 0.2 ? T.lit : q < 0.32 ? T.lit2 : T.win; c.fillRect(wx, wy, 1, 2); }
+          }
+        }
+        if (r() < 0.4) { c.fillStyle = T.lit2; c.fillRect(x + Math.floor(w / 2), GROUND - h - 5, 1, 5); }
+        x += w + Math.floor(r() * 2);
+      }
+    },
+    skyline(c, r, T) {                             // a campus skyline with stepped roofs
+      let x = 0;
+      while (x < TILE) {
+        const w = Math.min(18 + Math.floor(r() * 18), TILE - x), h = 30 + Math.floor(r() * 50);
+        c.fillStyle = T.far; c.fillRect(x, GROUND - h, w, h);
+        const sw = Math.floor(w * 0.55), sh = 6 + Math.floor(r() * 10);
+        c.fillRect(x, GROUND - h - sh, sw, sh);
+        for (let wy = GROUND - h + 4; wy < GROUND - 4; wy += 5) {
+          for (let wx = x + 3; wx < x + w - 3; wx += 4) {
+            const q = r();
+            if (q < 0.45) { c.fillStyle = q < 0.12 ? T.lit : T.win; c.fillRect(wx, wy, 2, 2); }
+          }
+        }
+        x += w + 2 + Math.floor(r() * 6);
+      }
+    },
+  };
+  const MID = {
+    racks(m, r, T, L) {                            // server racks with blinking LEDs
+      let x = 10;
+      while (x < TILE - 34) {
+        const w = 20 + Math.floor(r() * 8), h = 36 + Math.floor(r() * 28), top = GROUND - h;
+        m.fillStyle = PAL.ink; m.fillRect(x - 1, top - 1, w + 2, h + 1);
+        m.fillStyle = T.mid; m.fillRect(x, top, w, h);
+        for (let sy = top + 3; sy < GROUND - 6; sy += 6) {
+          m.fillStyle = T.midHi; m.fillRect(x + 2, sy, w - 4, 4);
+          m.fillStyle = PAL.ink; m.fillRect(x + 3, sy + 1, w - 10, 2);
+          L.push({ x: x + w - 5, y: sy + 1, k: Math.floor(r() * 100), s: 2 });
+        }
+        x += w + 14 + Math.floor(r() * 40);
+      }
+    },
+    pines(m, r, T, L) {                            // pine trees and fireflies
+      let x = 6;
+      while (x < TILE - 16) {
+        const s = 4 + Math.floor(r() * 4), cx = x + s + 1;
+        let y = GROUND - 4 - s * 5;
+        m.fillStyle = T.trunk; m.fillRect(cx - 1, GROUND - 5, 3, 5);
+        for (let layer = 0; layer < 3; layer++) {
+          const hw = s - 1 + layer * 2;
+          for (let j = 0; j < s * 2; j++) {
+            const half = Math.round(hw * (j + 1) / (s * 2));
+            m.fillStyle = PAL.ink; m.fillRect(cx - half - 1, y + j, half * 2 + 3, 1);
+            m.fillStyle = j < 2 ? T.midHi : T.mid; m.fillRect(cx - half, y + j, half * 2 + 1, 1);
+          }
+          y += s + 1;
+        }
+        if (r() < 0.6) L.push({ x: cx + Math.floor(rand(-14, 14)), y: GROUND - 20 - Math.floor(r() * 50), k: Math.floor(r() * 100), s: 1 });
+        x += s * 2 + 8 + Math.floor(r() * 26);
+      }
+    },
+    mesas(m, r, T, L) {                            // flat-topped mesas and cacti
+      let x = 4;
+      while (x < TILE - 70) {
+        const w = 40 + Math.floor(r() * 30), h = 26 + Math.floor(r() * 24);
+        for (let j = 0; j < h; j++) {
+          const inset = Math.max(0, 6 - Math.floor(j / 2));
+          m.fillStyle = j < 3 ? T.midHi : T.mid;
+          m.fillRect(x + inset, GROUND - h + j, w - inset * 2, 1);
+        }
+        const cx = x + w + 8 + Math.floor(r() * 10), ch = 10 + Math.floor(r() * 7);
+        m.fillStyle = PAL.ink; m.fillRect(cx - 1, GROUND - ch - 1, 4, ch + 1);
+        m.fillStyle = T.cactus; m.fillRect(cx, GROUND - ch, 2, ch);
+        m.fillRect(cx - 3, GROUND - ch + 4, 3, 1); m.fillRect(cx - 3, GROUND - ch + 1, 1, 3);
+        m.fillRect(cx + 2, GROUND - ch + 6, 3, 1); m.fillRect(cx + 4, GROUND - ch + 3, 1, 3);
+        x += w + 30 + Math.floor(r() * 40);
+      }
+    },
+    ice(m, r, T, L) {                              // ice spires with frosty edges
+      let x = 8;
+      while (x < TILE - 20) {
+        const h = 18 + Math.floor(r() * 36), hw = 4 + Math.floor(r() * 5);
+        for (let j = 0; j < h; j++) {
+          const half = Math.max(0, Math.round(hw * j / h));
+          m.fillStyle = PAL.ink; m.fillRect(x - half - 1, GROUND - h + j, half * 2 + 3, 1);
+          m.fillStyle = T.mid; m.fillRect(x - half, GROUND - h + j, half * 2 + 1, 1);
+          m.fillStyle = T.midHi; m.fillRect(x - half, GROUND - h + j, 1, 1);
+        }
+        if (r() < 0.5) L.push({ x: x, y: GROUND - h + 2, k: Math.floor(r() * 100), s: 1 });
+        x += hw * 2 + 10 + Math.floor(r() * 30);
+      }
+    },
+    neon(m, r, T, L) {                             // crowded billboards on poles
+      let x = 4;
+      while (x < TILE - 40) {
+        const w = 22 + Math.floor(r() * 18), h = 10 + Math.floor(r() * 8), top = 50 + Math.floor(r() * 40);
+        const col = [T.lit, T.lit2, PAL.yellow][Math.floor(r() * 3)];
+        m.fillStyle = PAL.ink; m.fillRect(x + Math.floor(w / 2) - 1, top + h, 3, GROUND - top - h);
+        m.fillStyle = T.midHi; m.fillRect(x + Math.floor(w / 2), top + h, 1, GROUND - top - h);
+        m.fillStyle = PAL.ink; m.fillRect(x - 1, top - 1, w + 2, h + 2);
+        m.fillStyle = col; m.fillRect(x, top, w, h);
+        m.fillStyle = PAL.ink; m.fillRect(x + 1, top + 1, w - 2, h - 2);
+        for (let ly = top + 3; ly < top + h - 2; ly += 3) {
+          m.fillStyle = col; m.fillRect(x + 3, ly, Math.floor((w - 6) * (0.4 + r() * 0.6)), 1);
+        }
+        L.push({ x: x, y: top - 1, k: Math.floor(r() * 100), s: 2 });
+        L.push({ x: x + w - 2, y: top - 1, k: Math.floor(r() * 100), s: 2 });
+        x += w + 6 + Math.floor(r() * 18);
+      }
+    },
+    campus(m, r, T, L) {                           // purple buildings with stepped tops
+      let x = 6;
+      while (x < TILE - 44) {
+        const w = 26 + Math.floor(r() * 16), h = 34 + Math.floor(r() * 30), top = GROUND - h;
+        const steps = 2 + Math.floor(r() * 2), sw = Math.floor(w / (steps + 1));
+        m.fillStyle = PAL.ink; m.fillRect(x - 1, top - 1, w + 2, h + 1);
+        m.fillStyle = T.mid; m.fillRect(x, top, w, h);
+        for (let s = 0; s < steps; s++) {           // a staircase of blocks on the roof
+          const bx = x + s * sw, bh = (steps - s) * 5;
+          m.fillStyle = PAL.ink; m.fillRect(bx - 1, top - bh - 1, sw + 2, bh + 1);
+          m.fillStyle = T.midHi; m.fillRect(bx, top - bh, sw, bh);
+        }
+        for (let wy = top + 4; wy < GROUND - 6; wy += 6) {
+          for (let wx = x + 3; wx < x + w - 4; wx += 5) {
+            m.fillStyle = r() < 0.55 ? T.lit : T.win; m.fillRect(wx, wy, 3, 3);
+          }
+        }
+        L.push({ x: x + 1, y: top - steps * 5 - 2, k: Math.floor(r() * 100), s: 2 });
+        x += w + 12 + Math.floor(r() * 30);
+      }
+    },
+  };
+  const DECO = {                                   // static extras painted on the sky
+    moon(c) {
+      for (let y = -6; y <= 6; y++) {             // a crescent: a disc minus an offset disc
+        for (let x = -6; x <= 6; x++) {
+          if (x * x + y * y > 38 || (x - 4) * (x - 4) + (y + 2) * (y + 2) < 30) continue;
+          c.fillStyle = x + y < -4 ? "#fff6d8" : "#e3dcb8"; c.fillRect(232 + x, 26 + y, 1, 1);
         }
       }
-      x += w + 1 + Math.floor(r() * 4);
-    }
-    const m = mid.getContext("2d"), r2 = seeded(11);
-    x = 10;
-    while (x < TILE - 34) {
-      const w = 20 + Math.floor(r2() * 8), h = 36 + Math.floor(r2() * 28), top = GROUND - h;
-      m.fillStyle = PAL.ink; m.fillRect(x - 1, top - 1, w + 2, h + 1);
-      m.fillStyle = PAL.panel; m.fillRect(x, top, w, h);
-      for (let sy = top + 3; sy < GROUND - 6; sy += 6) {
-        m.fillStyle = PAL.grid; m.fillRect(x + 2, sy, w - 4, 4);
-        m.fillStyle = PAL.ink; m.fillRect(x + 3, sy + 1, w - 10, 2);
-        LEDS.push({ x: x + w - 5, y: sy + 1, k: Math.floor(r2() * 100) });
+    },
+    sun(c) {                                       // a striped retro sunset sun
+      for (let y = -18; y <= 18; y++) {
+        if (y > 4 && (y % 4 === 0 || y % 4 === 1)) continue;
+        const half = Math.round(Math.sqrt(18 * 18 - y * y));
+        c.fillStyle = y < -6 ? "#ffe36e" : y < 6 ? "#ffc23f" : "#ff8f3f";
+        c.fillRect(200 - half, 70 + y, half * 2, 1);
       }
-      x += w + 14 + Math.floor(r2() * 40);
-    }
-  })();
+    },
+    aurora(c) {                                    // green and violet ribbons
+      for (let x = 0; x < W; x++) {
+        const y1 = Math.round(26 + 8 * Math.sin(x / 23) + 4 * Math.sin(x / 7));
+        const y2 = Math.round(40 + 6 * Math.sin(x / 31 + 2));
+        c.fillStyle = "#2fd59a"; if (x % 2 === 0) c.fillRect(x, y1, 1, 6 + (x % 5));
+        c.fillStyle = "#7a5cf0"; if (x % 3 === 0) c.fillRect(x, y2, 1, 4);
+      }
+    },
+    glow(c) {                                      // a soft purple halo behind the campus
+      for (let r = 40; r > 0; r -= 8) {
+        c.fillStyle = "rgba(185, 166, 255, 0.06)";
+        c.fillRect(144 - r * 2, 98 - r / 2, r * 4, r + 40);
+      }
+    },
+  };
+  const THEMES = [
+    { name: "NIGHT CITY", sky: ["#11142c", "#1e2140", "#2a2e57"], stars: true, deco: "moon",
+      far: "city", farC: { far: "#262a52", win: "#3a3f6e", lit: "#ffd23f" },
+      mid: "racks", midC: { mid: "#2a2e57", midHi: "#3a3f6e" },
+      lights: [PAL.teal, PAL.orange, PAL.blue], ground: "#2a2e57", line: "#9f7aea", dash: "#3a3f6e",
+      accent: PAL.yellow },
+    { name: "FOREST", sky: ["#0c1f26", "#16403f", "#3d6b52"], stars: true,
+      far: "hills", farC: { far: "#1b3a35", farTop: "#2c5a46" },
+      mid: "pines", midC: { mid: "#1c4a32", midHi: "#3f8a4e", trunk: "#4a2f1d" },
+      lights: ["#e8ff7a", "#ffd23f", "#b8ff9a"], ground: "#2f3b1f", line: "#8bd35a", dash: "#44562c",
+      accent: "#b8ff9a" },
+    { name: "DESERT", sky: ["#3a1846", "#a1435a", "#f08a4b"], stars: false, deco: "sun",
+      far: "dunes", farC: { far: "#9b4a3c", farTop: "#c76a45" },
+      mid: "mesas", midC: { mid: "#6e2f2f", midHi: "#a4503c", cactus: "#2f7a4a" },
+      lights: [], ground: "#d08a45", line: "#ffe08a", dash: "#a8642e",
+      accent: "#ffe08a" },
+    { name: "ARCTIC", sky: ["#070f24", "#10305a", "#2a5f8f"], stars: true, deco: "aurora",
+      far: "mountains", farC: { far: "#2b4a70", farTop: "#e4eef8" },
+      mid: "ice", midC: { mid: "#5d8fbf", midHi: "#d8ecff" },
+      lights: ["#ffffff", "#bfe6ff"], ground: "#a9c6e2", line: "#ffffff", dash: "#7f9fc2",
+      accent: "#bfe6ff" },
+    { name: "NEON RUSH", sky: ["#12031c", "#2c0a3d", "#561155"], stars: true,
+      far: "towers", farC: { far: "#2a0b38", win: "#4a1a5e", lit: "#ff3fa4", lit2: "#2ee6e6" },
+      mid: "neon", midC: { midHi: "#6a2a7a", lit: "#ff3fa4", lit2: "#2ee6e6" },
+      lights: ["#ff3fa4", "#2ee6e6", PAL.yellow], ground: "#2a0a33", line: "#ff3fa4", dash: "#5c1a66",
+      accent: "#ff7ac8" },
+    { name: "TUWAIQ ACADEMY", sky: ["#140b38", "#2b1a72", "#5634c4"], stars: true, deco: "glow",
+      far: "skyline", farC: { far: "#33238a", win: "#4b39a8", lit: "#b9a6ff" },
+      mid: "campus", midC: { mid: "#4f2bb8", midHi: "#7457e0", win: "#3a2290", lit: "#d9ceff" },
+      lights: ["#ffffff", "#d9ceff", PAL.yellow], ground: "#24165e", line: "#b9a6ff", dash: "#3d2a92",
+      accent: "#d9ceff" },
+  ];
+  THEMES.forEach((T, i) => {
+    T.skyC = skyCanvas(T.sky);
+    if (T.deco) DECO[T.deco](T.skyC.getContext("2d"));
+    T.farL = mk(TILE, H); T.midL = mk(TILE, H); T.leds = [];
+    FAR[T.far](T.farL.getContext("2d"), seeded(7 + i * 13), T.farC);
+    MID[T.mid](T.midL.getContext("2d"), seeded(11 + i * 17), T.midC, T.leds);
+  });
+  const themeOf = L => THEMES[Math.min(L, THEMES.length - 1)];
   const SKY = [];
   (function () {
     const r = seeded(3);
-    for (let i = 0; i < 36; i++) SKY.push({ x: Math.floor(r() * W), y: 14 + Math.floor(r() * 60), k: r() * 10 });
+    for (let i = 0; i < 36; i++) SKY.push({ x: Math.floor(r() * W), y: 6 + Math.floor(r() * 60), k: r() * 10 });
   })();
 
-  // ---------------------------------------------------------------- best score
-  let memoryBest = 0;
+  // ---------------------------------------------------------------- storage (best score, mute)
+  let memoryBest = 0, memoryMuted = false;
   function loadBest() {
     try { return parseInt(localStorage.getItem("indieRunBest") || "0", 10) || 0; }
     catch (e) { return memoryBest; }
@@ -232,80 +537,228 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
     memoryBest = v;
     try { localStorage.setItem("indieRunBest", String(v)); } catch (e) { /* storage blocked */ }
   }
+  function loadMuted() {
+    try { return localStorage.getItem("indieRunMuted") === "1"; } catch (e) { return memoryMuted; }
+  }
+  function saveMuted(v) {
+    memoryMuted = v;
+    try { localStorage.setItem("indieRunMuted", v ? "1" : "0"); } catch (e) { /* storage blocked */ }
+  }
+
+  // ---------------------------------------------------------------- chiptune sounds (WebAudio)
+  let actx = null, master = null, noiseBuf = null, muted = loadMuted();
+  // Safari starts WebAudio only inside a real user gesture, synchronously: unlockAudio() runs
+  // at the top of every keydown / pointerdown / touchend / click handler, creates the context
+  // lazily, calls resume() right there and plays a 1-sample silent buffer (needed on iOS). If
+  // the context is suspended or "interrupted" again (tab switch, phone call), the next gesture
+  // does the same. It is never called from the game loop: resuming there stalled Safari right
+  // at a slide or hop. sfx() only plays when the context is already running.
+  // Safari's resume() takes effect a moment later: sounds from the same gesture (start, unmute)
+  // are scheduled anyway for 0.3 s and play as soon as the context runs
+  let wakeT = -1e9;
+  function unlockAudio() {
+    if (muted) return;
+    if (!actx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      try {
+        // iOS: play through the ringer switch like a game, not like a ringtone
+        if (navigator.audioSession) navigator.audioSession.type = "playback";
+      } catch (e) { /* older Safari */ }
+      try {
+        actx = new AC();
+        master = actx.createGain(); master.gain.value = 0.35; master.connect(actx.destination);
+        noiseBuf = actx.createBuffer(1, Math.floor(actx.sampleRate * 0.3), actx.sampleRate);
+        const d = noiseBuf.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      } catch (e) { actx = null; return; }
+    }
+    if (actx.state === "running") return;
+    wakeT = performance.now();
+    try { const r = actx.resume && actx.resume(); if (r && r.catch) r.catch(() => {}); } catch (e) { /* ignore */ }
+    try {
+      const s = actx.createBufferSource();
+      s.buffer = actx.createBuffer(1, 1, actx.sampleRate);
+      s.connect(actx.destination);
+      if (s.start) s.start(0); else s.noteOn(0);
+    } catch (e) { /* ignore */ }
+  }
+  function tone(a, at, f0, f1, dur, type, vol) {
+    const o = a.createOscillator(), gn = a.createGain(), t0 = a.currentTime + at;
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t0);
+    if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+    gn.gain.setValueAtTime(vol, t0);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(gn); gn.connect(master);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  function noise(a, at, dur, vol) {
+    const s = a.createBufferSource(), gn = a.createGain(), t0 = a.currentTime + at;
+    s.buffer = noiseBuf;
+    gn.gain.setValueAtTime(vol, t0);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    s.connect(gn); gn.connect(master);
+    s.start(t0); s.stop(t0 + dur);
+  }
+  const notes = (a, list, len, type, vol) => list.forEach((f, i) => tone(a, i * len, f, f, len * 1.1, type, vol));
+  const SFX = {
+    jump: a => tone(a, 0, 280, 560, 0.11, "square", 0.12),
+    hop: a => tone(a, 0, 440, 660, 0.07, "square", 0.08),
+    slide: a => { tone(a, 0, 220, 90, 0.14, "triangle", 0.22); noise(a, 0, 0.08, 0.05); },
+    power: a => notes(a, [523, 659, 784, 1047], 0.06, "square", 0.1),
+    hit: a => { noise(a, 0, 0.2, 0.25); tone(a, 0, 180, 55, 0.25, "square", 0.14); },
+    level: a => { notes(a, [392, 523, 659, 784], 0.08, "square", 0.1); tone(a, 0.32, 1047, 1047, 0.2, "triangle", 0.2); },
+    goal: a => {
+      [[523, 0], [659, 0.1], [784, 0.2], [1047, 0.3], [784, 0.5], [1047, 0.6]].forEach(([f, t], i) =>
+        tone(a, t, f, f, i === 5 ? 0.5 : 0.12, "square", 0.11));
+      [[131, 0], [196, 0.3], [262, 0.6]].forEach(([f, t]) => tone(a, t, f, f, 0.3, "triangle", 0.25));
+    },
+    over: a => { notes(a, [392, 330, 262, 196], 0.14, "square", 0.11); tone(a, 0.56, 98, 65, 0.4, "triangle", 0.25); },
+    blip: a => tone(a, 0, 660, 660, 0.05, "square", 0.07),
+  };
+  let sfxPlayed = 0;
+  function sfx(name) {
+    if (muted || !actx || actx.state === "closed") return;
+    if (actx.state !== "running" && performance.now() - wakeT > 300) return;   // never wait for audio
+    try { SFX[name](actx); sfxPlayed++; } catch (e) { /* audio is optional */ }
+  }
+  function toggleMute() {
+    muted = !muted;
+    saveMuted(muted);
+    if (!muted) { unlockAudio(); sfx("blip"); }
+  }
 
   // ---------------------------------------------------------------- game state
-  let state = "title";            // title | play | paused | dying | over
-  let g = null, p = null, stateT = 0, clock = 0, titleScroll = 0;
-  let best = loadBest(), newBest = false, fact = "";
-  const input = { jumpHeld: false, slideHeld: false };
+  let state = "title";            // title | play | paused | dying | goal | over
+  let g = null, p = null, stateT = 0, clock = 0, titleScroll = 0, goalSel = 0;
+  let best = loadBest(), newBest = false, fact = "", touchUsed = false;
+  const input = { jumpHeld: false, slideHeld: false, slideKeys: new Set(), slideTouch: null };
 
-  const levelName = L => (L < YEARS.length ? YEARS[L] : "ENDLESS");
-  function levelText(L, up) {
-    if (L >= YEARS.length) return "LEVEL UP: ENDLESS — SPEED KEEPS RISING";
-    return (up ? "LEVEL UP: " : "") + YEARS[L] + " — " + fmtInt(REL[L]) + " INDIE GAMES RELEASED";
-  }
-  // Difficulty follows the real number of Indie releases in that year
+  const levelName = L => (L < TU ? YEARS[L] : g && g.endless ? "TUWAIQ ENDLESS" : "TUWAIQ ACADEMY");
+  // Difficulty follows the real number of Indie releases in that year; the final level is a
+  // little harder than 2024 and keeps rising in endless mode
   function busyness(L) {
     const i = Math.min(L, YEARS.length - 1);
-    const extra = L >= YEARS.length ? Math.min(1.3, 1 + 0.05 * (L - YEARS.length + 1)) : 1;
+    let extra = 1;
+    if (L >= TU) extra = 1.06 * (g && g.endless ? 1 + Math.min(0.25, g.endlessT / 120) : 1);
     return { ratio: REL[i] / REL[0], extra: extra };
   }
-  const speedFor = L => { const b = busyness(L); return 100 * Math.sqrt(b.ratio) * b.extra; };
-  const densityFor = L => { const b = busyness(L); return Math.pow(b.ratio, 0.7) * b.extra; };
-  const score = () => Math.floor(g.dist / 8) + g.stars * 10;
+  const speedFor = L => { const b = busyness(L); return 95 * Math.pow(b.ratio, 0.7) * b.extra; };
+  const gapTimeFor = L => { const b = busyness(L); return 1.9 / Math.pow(b.ratio, 0.9) / b.extra; };
+  // 0.92 points per pixel: with about half of the stars collected, 10,000 comes ~10 s into
+  // the Tuwaiq level (more stars: earlier, fewer: later; never before that level)
+  const DIST_PTS = 0.92;
+  const score = () => Math.floor(g.dist * DIST_PTS) + g.stars * 10;
+  const levelAt = t => Math.min(TU, Math.floor(t / LEVEL_TIME));
 
   function reset() {
-    g = { dist: 0, simT: 0, L: 0, levelT: 0, speed: speedFor(0), stars: 0,
+    g = { dist: 0, simT: 0, L: 0, levelT: 0, speed: speedFor(0), stars: 0, lives: LIVES,
           obs: [], items: [], parts: [], floats: [], nextX: PX + 260, nextPowerT: 12,
+          lastEnd: 0, segStart: PX + 260,
           shield: 0, magnet: 0, cozy: 0, invuln: 0, shake: 0, deadT: 0,
-          banner: { text: levelText(0, false), t: 3 }, toast: null };
-    p = { y: GROUND, vy: 0, onGround: true, jumps: 2, coyote: 0, buffer: 0, slideT: 0,
-          fastFall: 0, anim: 0 };
+          banner: { L: 0, t: 2.2 }, toast: null, fade: 0, fromL: 0,
+          tunnels: {}, spikes: {}, goalDone: false, endless: false, endlessT: 0, finished: false,
+          hits: 0, pits: 0, tunnelsPassed: 0, hopsCleared: 0 };
+    p = { y: GROUND, vy: 0, onGround: true, jumps: 2, coyote: 0, buffer: 0, slideMin: 0,
+          fastFall: 0, anim: 0, hop: false, hopT: 0, wasSliding: false };
+  }
+  function clearInput() {
+    input.jumpHeld = false; input.slideKeys.clear(); input.slideTouch = null; input.slideHeld = false;
   }
   function start() {
     reset();
     state = "play"; stateT = 0; newBest = false;
-    input.jumpHeld = input.slideHeld = false;
+    clearInput();
+    sfx("level");
     try { cv.focus(); } catch (e) { /* ignore */ }
   }
   function pause() {
     if (state !== "play") return;
     state = "paused";
-    input.jumpHeld = input.slideHeld = false;
+    clearInput();
   }
   function resume() {
     if (state === "paused") state = "play";
   }
 
   // ---------------------------------------------------------------- spawning (always fair)
+  function pickType(L, easy) {
+    if (easy) return "bug";
+    if (L >= 1 && !g.tunnels[L]) return "tunnel";          // every year from 2021 has a tunnel
+    const r = Math.random();
+    if (L === 0) return r < 0.5 ? "bug" : r < 0.8 ? "gap" : "crunch";
+    return r < 0.36 ? "bug" : r < 0.64 ? "gap" : r < 0.78 ? "crunch" : "tunnel";
+  }
+  // Tunnel rules, in seconds at the fastest speed the tunnel can meet. Nothing but the small
+  // floor bug is ever placed inside a tunnel, and nothing at all (no obstacle, star row or
+  // power-up) in the safe zones in front of the entrance and behind the exit.
+  const TUN_BEFORE = 1.2;   // a late or double jump has landed and the slide is held
+  const TUN_AFTER = 0.9;    // time to stand up and react to the next obstacle
+  const BUG_IN = 0.6, BUG_OUT = 0.6;  // no floor bug in the first and last part of a tunnel
+  const BUG_GAP = 1.0;      // one floor bug to the next: hop, land, react, hop again
+  const ARC = 20;           // px: the stars drawn around an obstacle stay out of the zones
+  function tunnelBugs(L) {
+    if (L < 2) return 0;                                   // floor bugs from 2022
+    if (!g.spikes[L]) return 1;                            // every year from 2022 has one
+    if (L >= 3 && Math.random() < 0.35) return 2;          // long double-bug tunnels from 2023
+    return Math.random() < 0.6 ? 1 : 0;
+  }
   function spawnAhead() {
     while (g.nextX < g.dist + W + 40) {
       const arriveT = g.simT + (g.nextX - g.dist - PX) / g.speed;
+      const L = levelAt(arriveT);
       const easy = arriveT < EASY_TIME;           // the first 10 seconds: bugs only, wide gaps
-      const spd = Math.max(g.speed, speedFor(g.L));
-      let type = "bug";
-      if (!easy) {
-        const r = Math.random();
-        type = r < 0.42 ? "bug" : r < 0.72 ? "gap" : "crunch";
-      }
+      // Margins use the fastest speed this obstacle can meet: the next level (or the endless
+      // ramp) may already have started when the player gets there
+      const spd = 1.05 * Math.max(g.speed, speedFor(L), speedFor(levelAt(arriveT + 3)));
+      const type = pickType(L, easy);
+      const x = type === "tunnel" ? Math.max(g.nextX, g.lastEnd + TUN_BEFORE * spd + ARC) : g.nextX;
+      // Stars and power-ups go in the free run since the last obstacle, outside safe zones
+      fillSegment(g.segStart, type === "tunnel" ? x - TUN_BEFORE * spd : x, arriveT);
       // A gap is never wider than a single jump can clear with time to spare
       const w = type === "bug" ? 11
         : type === "gap" ? Math.round(rand(22, Math.max(24, Math.min(58, 0.38 * g.speed))))
-        : Math.round(rand(28, 40));
-      const o = { type: type, x: g.nextX, w: w, dead: false };
-      g.obs.push(o);
+        : type === "crunch" ? Math.round(rand(28, 40))
+        : 0;
+      const o = { type: type, x: x, w: w, dead: false, spikes: [] };
+      if (type === "tunnel") {
+        const n = tunnelBugs(L);
+        o.w = Math.round(spd * (n === 2 ? rand(2.3, 2.7) : n === 1 ? rand(1.4, 1.9) : rand(0.8, 1.5)));
+        g.tunnels[L] = true;
+        if (n) g.spikes[L] = true;
+        const a = o.x + BUG_IN * spd, b = o.x + o.w - BUG_OUT * spd - SPIKE_W;   // allowed range
+        if (n === 1) o.spikes.push(rand(a, b));
+        if (n === 2) {
+          const x1 = rand(a, b - BUG_GAP * spd);
+          o.spikes.push(x1, rand(x1 + BUG_GAP * spd, b));
+        }
+        o.spikes = o.spikes.map(sx => ({ type: "spike", x: Math.round(sx), w: SPIKE_W, dead: false }));
+      }
+      g.obs.push(o, ...o.spikes);
       starsFor(o);
       // Free run after every obstacle: at least 0.7 s of reaction time at the current speed
-      let space = Math.max(spd * 0.7 + 18, (170 / densityFor(g.L)) * rand(0.75, 1.35));
+      let space = Math.max(spd * 0.7 + 18, spd * gapTimeFor(L) * rand(0.8, 1.25));
       if (easy) space *= 1.7;
-      fillSegment(o.x + w, o.x + w + space, arriveT);
-      g.nextX = o.x + w + space;
+      if (type === "tunnel") space = Math.max(space, TUN_AFTER * spd + ARC);
+      g.lastEnd = o.x + o.w;
+      g.segStart = o.x + o.w + (type === "tunnel" ? TUN_AFTER * spd : 0);
+      g.nextX = o.x + o.w + space;
     }
+    g.obs.sort((a, b) => a.x - b.x);
   }
   function addStar(x, y) { g.items.push({ kind: "star", x: x, y: y, taken: false }); }
   function starsFor(o) {
-    if (Math.random() > 0.6) return;
     const midX = o.x + o.w / 2 - 2;
+    if (o.type === "tunnel") {                    // a low row of stars to collect while sliding
+      for (let x = o.x + 10; x < o.x + o.w - 10; x += 14) {
+        if (o.spikes.some(b => x > b.x - 26 && x < b.x + 20)) continue;
+        if (Math.random() < 0.7) addStar(x, GROUND - 5);
+      }
+      for (const b of o.spikes) addStar(b.x, GROUND - 9);   // a hint above each floor bug
+      return;
+    }
+    if (Math.random() > 0.6) return;
     if (o.type === "bug") {
       addStar(midX - 14, GROUND - 20); addStar(midX, GROUND - 30); addStar(midX + 14, GROUND - 20);
     } else if (o.type === "gap") {
@@ -336,6 +789,11 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
     for (const o of g.obs) if (o.type === "gap" && wx > o.x + 2 && wx < o.x + o.w - 2) return o;
     return null;
   }
+  // Is the player under (or just about to enter) a low ceiling?
+  function underCeiling() {
+    const a = g.dist + PX, b = g.dist + PX + 18;
+    return g.obs.some(o => (o.type === "tunnel" || o.type === "crunch") && a < o.x + o.w && b > o.x);
+  }
   function burst(x, y, col, n, power) {
     for (let i = 0; i < n && g.parts.length < 240; i++) {
       const a = Math.random() * Math.PI * 2, s = rand(20, power || 90);
@@ -346,35 +804,53 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
   function floatText(str, x, y, col) { g.floats.push({ text: str, x: x, y: y, col: col, t: 0.8 }); }
   function shake(n) { if (!REDUCED) g.shake = Math.max(g.shake, n); }
 
+  const sliding = () => p.onGround && (input.slideHeld || p.slideMin > 0);
   function land() {
-    p.y = GROUND; p.vy = 0; p.onGround = true; p.jumps = 2;
-    if (input.slideHeld) p.slideT = Math.max(p.slideT, 0.1);
+    p.y = GROUND; p.vy = 0; p.onGround = true; p.jumps = 2; p.hop = false;
+  }
+  function bounceUp() {             // out of a pit: thrown back up
+    p.y = GROUND + 4; p.vy = -JUMP_V * 1.05; p.jumps = 1; p.hop = false;
   }
   function fallInPit() {
+    g.pits++;
+    if (g.invuln > 0) { bounceUp(); return; }
     if (g.shield > 0) {             // MULTIPLAYER shield: a teammate throws you back up
       g.shield = 0; g.invuln = 1;
-      p.y = GROUND + 4; p.vy = -JUMP_V * 1.05; p.jumps = 1;
+      bounceUp();
       burst(PX + 5, GROUND, PAL.teal, 14);
       floatText("SAVED!", PX - 4, GROUND - 24, PAL.teal);
+      sfx("power");
       shake(3);
-    } else die();
+      return;
+    }
+    if (loseLife()) bounceUp();
   }
   function updatePlayer(dt) {
     p.anim += dt * g.speed / 9;
-    p.coyote -= dt; p.buffer -= dt; p.fastFall -= dt;
+    p.coyote -= dt; p.buffer -= dt; p.fastFall -= dt; p.slideMin -= dt;
     if (p.onGround && gapAt(g.dist + PX + 5)) { p.onGround = false; p.coyote = 0.08; }
     if (!p.onGround && p.coyote <= 0 && p.jumps === 2) p.jumps = 1;
-    if (p.buffer > 0 && p.jumps > 0) {
-      p.vy = p.jumps === 2 ? -JUMP_V : -DOUBLE_V;
-      p.jumps--; p.buffer = 0; p.coyote = 0; p.onGround = false; p.slideT = 0;
-      burst(PX + 5, p.y, p.jumps === 0 ? PAL.purple : PAL.muted, 5, 40);
+    if (p.buffer > 0) {
+      if (sliding() && underCeiling()) {
+        // Slide hop: a short, low hop that stays under the ceiling
+        p.vy = 0; p.hopT = 0; p.onGround = false; p.hop = true; p.jumps = 0; p.buffer = 0;
+        sfx("hop");
+      } else if (p.jumps > 0 && !p.hop) {
+        p.vy = p.jumps === 2 ? -JUMP_V : -DOUBLE_V;
+        p.jumps--; p.buffer = 0; p.coyote = 0; p.onGround = false; p.slideMin = 0;
+        burst(PX + 5, p.y, p.jumps === 0 ? PAL.purple : PAL.muted, 5, 40);
+        sfx("jump");
+      }
     }
-    if (input.slideHeld && p.onGround) p.slideT = Math.max(p.slideT, 0.1);
-    p.slideT -= dt;
-    if (!p.onGround) {
+    if (p.hop) {                                   // rise, hang, then drop back to the floor
+      p.hopT += dt;
+      if (p.hopT < HOP_HANG) p.y = Math.max(GROUND - HOP_H, p.y - HOP_RISE * dt);
+      else { p.vy += HOP_FALL_G * dt; p.y += p.vy * dt; }
+      if (p.hopT >= HOP_HANG && p.y >= GROUND) land();
+    } else if (!p.onGround) {
       const prev = p.y;
-      const fast = (input.slideHeld || p.fastFall > 0) ? 2.4 : 1;
-      p.vy += GRAVITY * fast * dt;
+      const grav = GRAVITY * ((input.slideHeld || p.fastFall > 0) ? 2.4 : 1);
+      p.vy += grav * dt;
       p.y += p.vy * dt;
       if (p.vy >= 0 && p.y >= GROUND) {
         const gap = gapAt(g.dist + PX + 5);
@@ -382,10 +858,13 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
         else if (p.y > GROUND + 5) fallInPit();
       }
     }
+    const s = sliding();
+    if (s && !p.wasSliding && !p.hop) sfx("slide");
+    p.wasSliding = s || p.hop;
   }
   function playerBox() {
-    const sliding = p.onGround && p.slideT > 0;
-    return sliding ? { x: PX + 1, y: p.y - 6, w: 11, h: 6 } : { x: PX + 2, y: p.y - 12, w: 6, h: 12 };
+    if (p.hop) return { x: PX + 1, y: p.y - 5, w: 10, h: 5 };
+    return sliding() ? { x: PX + 1, y: p.y - 6, w: 11, h: 6 } : { x: PX + 2, y: p.y - 12, w: 6, h: 12 };
   }
   const overlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
@@ -411,39 +890,74 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
         g[it.p] = P.dur;
         burst(sx, sy, P.col, 16, 100);
         g.toast = { title: P.name + ": " + P.effect, fact: P.fact, col: P.col, t: 2.4 };
+        sfx("power");
       }
     }
   }
+  // Take one hit: returns true if the player is still alive
+  function loseLife() {
+    g.lives--; g.hits++;
+    sfx("hit");
+    if (g.lives <= 0) { die(); return false; }
+    g.invuln = 1;
+    burst(PX + 5, p.y - 6, PAL.red, 14, 90);
+    floatText("-1 LIFE", PX - 6, p.y - 24, PAL.red);
+    shake(5);
+    return true;
+  }
   function hit(o) {
     if (g.invuln > 0) return;
-    const sx = o.x - g.dist + Math.min(o.w, 11) / 2;
+    const ceiling = o.type === "tunnel" || o.type === "crunch";
     if (g.shield > 0) {
-      g.shield = 0; g.invuln = 1; o.dead = true;
-      burst(sx, GROUND - 6, PAL.teal, 16);
+      g.shield = 0; g.invuln = 1;
+      if (!ceiling) o.dead = true;
+      burst(o.x - g.dist + Math.min(o.w, 11) / 2, GROUND - 6, PAL.teal, 16);
       floatText("BLOCKED!", PX - 8, GROUND - 26, PAL.teal);
+      sfx("power");
       shake(3);
-    } else die();
+      return;
+    }
+    if (!ceiling) o.dead = true;
+    loseLife();
   }
-  function collide() {
+  function obstacleBox(o, sx) {
+    if (o.type === "bug") return { x: sx + 1, y: GROUND - 7, w: 9, h: 7 };
+    if (o.type === "spike") return { x: sx, y: GROUND - SPIKE_H, w: SPIKE_W, h: SPIKE_H };
+    return { x: sx + 1, y: 0, w: o.w - 2, h: CEIL };          // crunch bar or tunnel ceiling
+  }
+  function firstHit() {              // the obstacle the player is touching, or null
     const box = playerBox();
     for (const o of g.obs) {
       if (o.dead || o.type === "gap") continue;
       const sx = o.x - g.dist;
       if (sx > box.x + 20 || sx + o.w < box.x - 4) continue;
-      const ob = o.type === "bug" ? { x: sx + 1, y: GROUND - 7, w: 9, h: 7 }
-                                  : { x: sx + 1, y: 0, w: o.w - 2, h: GROUND - 10 };
-      if (overlap(box, ob)) { hit(o); if (state !== "play") return; }
+      if (overlap(box, obstacleBox(o, sx))) return o;
+    }
+    return null;
+  }
+  function collide() {
+    const o = firstHit();
+    if (o) hit(o);
+  }
+  function countPassed() {          // stats for the test hook
+    for (const o of g.obs) {
+      if (o.counted || o.x + o.w > g.dist + PX) continue;
+      o.counted = true;
+      if (o.type === "tunnel") g.tunnelsPassed++;
+      if (o.type === "spike" && !o.dead) g.hopsCleared++;
     }
   }
   function die() {
     state = "dying";
     g.deadT = 0.9;
-    p.vy = -220; p.onGround = false;
+    p.vy = -220; p.onGround = false; p.hop = false;
     burst(PX + 5, p.y - 6, PAL.orange, 26, 120);
     shake(8);
+    sfx("over");
   }
-  function gameOver() {
+  function gameOver(finished) {
     const s = score();
+    g.finished = !!finished;
     newBest = s > best;
     if (newBest) { best = s; saveBest(s); }
     const top = D.top_subgenres[0];
@@ -455,10 +969,30 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
     ];
     if (top) facts.push(top.name + " HAS THE BEST INDIE HIT RATE: " + pct(top.hit_rate) + "% (" + fmtInt(top.games) + " GAMES).");
     if (g.L < YEARS.length) facts.push("YOU REACHED " + YEARS[g.L] + ": " + fmtInt(REL[g.L]) + " INDIE GAMES WERE RELEASED THAT YEAR.");
+    else facts.push("YOU SURVIVED " + YEARS[0] + "–" + YEARS[YEARS.length - 1] + ": " + fmtInt(REL.reduce((a, b) => a + b, 0)) + " INDIE RELEASES.");
     let next = facts[Math.floor(Math.random() * facts.length)];
     if (next === fact) next = facts[(facts.indexOf(next) + 1) % facts.length];
     fact = next;
     state = "over"; stateT = 0;
+    clearInput();
+  }
+  function reachGoal() {
+    g.goalDone = true;
+    state = "goal"; stateT = 0; goalSel = 0;
+    clearInput();
+    sfx("goal");
+  }
+  function chooseGoal(i) {
+    if (state !== "goal" || stateT < 0.8) return;   // ignore keys still mashed from playing
+    if (i === 0) {                                  // CONTINUE: endless run in the Tuwaiq theme
+      state = "play"; stateT = 0;
+      g.endless = true; g.invuln = 1.5;
+      g.banner = { L: TU, t: 2, endless: true };
+      sfx("level");
+    } else {
+      sfx("blip");
+      gameOver(true);
+    }
   }
   function updateParticles(dt) {
     for (const q of g.parts) { q.vy += 220 * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; }
@@ -467,66 +1001,85 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
     g.floats = g.floats.filter(f => f.t > 0);
   }
 
-  function update(rdt) {
-    stateT += rdt;
-    if (state === "title") { titleScroll += 40 * rdt; return; }
-    if (state === "paused" || state === "over") return;
-    const dt = rdt * (g.cozy > 0 ? 0.6 : 1);        // COZY slows the whole game
-    for (const k of ["shield", "magnet", "cozy", "invuln"]) g[k] = Math.max(0, g[k] - rdt);
-    if (g.banner && (g.banner.t -= rdt) <= 0) g.banner = null;
-    if (g.toast && (g.toast.t -= rdt) <= 0) g.toast = null;
-    g.shake = Math.max(0, g.shake - rdt * 30);
-    updateParticles(dt);
-    if (state === "dying") {
-      p.vy += GRAVITY * rdt; p.y += p.vy * rdt;
-      if ((g.deadT -= rdt) <= 0) gameOver();
-      return;
-    }
+  // Time, level, speed, distance and spawning: everything that does not depend on the player
+  function advanceWorld(dt) {
     g.simT += dt; g.levelT += dt;
-    if (g.levelT >= LEVEL_TIME) {
-      g.levelT -= LEVEL_TIME; g.L++;
-      g.banner = { text: levelText(g.L, true), t: 3 };
+    if (g.endless) g.endlessT += dt;
+    if (g.L < TU && g.levelT >= LEVEL_TIME) {
+      g.levelT -= LEVEL_TIME; g.fromL = g.L; g.L++; g.fade = 0.6;
+      g.banner = { L: g.L, t: g.L === TU ? 2.6 : 2.2 };
+      sfx("level");
     }
     g.speed += (speedFor(g.L) - g.speed) * Math.min(1, dt * 1.2);
     g.dist += g.speed * dt;
     spawnAhead();
+  }
+  function update(rdt) {
+    stateT += rdt;
+    if (state === "title") { titleScroll += 40 * rdt; return; }
+    if (state === "paused" || state === "over" || state === "goal") return;
+    const dt = rdt * (g.cozy > 0 ? 0.6 : 1);        // COZY slows the whole game
+    for (const k of ["shield", "magnet", "cozy", "invuln"]) g[k] = Math.max(0, g[k] - rdt);
+    if (g.banner && (g.banner.t -= rdt) <= 0) g.banner = null;
+    if (g.toast && (g.toast.t -= rdt) <= 0) g.toast = null;
+    g.fade = Math.max(0, g.fade - rdt);
+    g.shake = Math.max(0, g.shake - rdt * 30);
+    updateParticles(dt);
+    if (state === "dying") {
+      p.vy += GRAVITY * rdt; p.y += p.vy * rdt;
+      if ((g.deadT -= rdt) <= 0) gameOver(false);
+      return;
+    }
+    advanceWorld(dt);
     updatePlayer(dt);
     if (state !== "play") return;
     updateItems(dt);
     collide();
+    if (state !== "play") return;
+    countPassed();
     g.obs = g.obs.filter(o => o.x + o.w > g.dist - 20);
     g.items = g.items.filter(it => !it.taken && it.x + 13 > g.dist - 20);
+    // The 10,000 goal can only be reached on the final level, after its banner
+    if (!g.goalDone && g.L >= TU && g.levelT > 2.6 && score() >= GOAL) reachGoal();
   }
 
   // ---------------------------------------------------------------- render
-  function drawBackground(dist) {
-    for (const s of SKY) {
-      ctx.fillStyle = Math.floor(clock * 1.5 + s.k) % 7 === 0 ? PAL.text : PAL.grid;
-      ctx.fillRect(s.x, s.y, 1, 1);
-    }
-    const fo = -Math.floor(dist * 0.15) % TILE, mo = -Math.floor(dist * 0.4) % TILE;
-    ctx.drawImage(far, fo, 0); ctx.drawImage(far, fo + TILE, 0);
-    for (const off of [mo, mo + TILE]) {
-      if (off > W || off + TILE < 0) continue;
-      ctx.drawImage(mid, off, 0);
-      for (const l of LEDS) {
-        const x = off + l.x;
-        if (x < -2 || x > W) continue;
-        const c = Math.floor(clock * 3 + l.k) % 6;
-        if (c > 2) continue;
-        ctx.fillStyle = [PAL.teal, PAL.orange, PAL.blue][c];
-        ctx.fillRect(x, l.y, 2, 2);
+  function drawScene(T, dist, alpha) {
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(T.skyC, 0, 0);
+    if (T.stars) {
+      for (const s of SKY) {
+        ctx.fillStyle = Math.floor(clock * 1.5 + s.k) % 7 === 0 ? PAL.text : T.sky[2];
+        ctx.fillRect(s.x, s.y, 1, 1);
       }
     }
-  }
-  function drawGround(dist) {
-    ctx.fillStyle = PAL.panel; ctx.fillRect(0, GROUND, W, H - GROUND);
-    ctx.fillStyle = PAL.purple; ctx.fillRect(0, GROUND, W, 1);
-    ctx.fillStyle = PAL.grid;
+    const fo = -Math.floor(dist * 0.15) % TILE, mo = -Math.floor(dist * 0.4) % TILE;
+    ctx.drawImage(T.farL, fo, 0); ctx.drawImage(T.farL, fo + TILE, 0);
+    for (const off of [mo, mo + TILE]) {
+      if (off > W || off + TILE < 0) continue;
+      ctx.drawImage(T.midL, off, 0);
+      for (const l of T.leds) {
+        const x = off + l.x;
+        if (x < -2 || x > W || !T.lights.length) continue;
+        const c = Math.floor(clock * 3 + l.k) % (T.lights.length * 2);
+        if (c >= T.lights.length) continue;
+        ctx.fillStyle = T.lights[c];
+        ctx.fillRect(x, l.y, l.s, l.s);
+      }
+    }
+    ctx.fillStyle = T.ground; ctx.fillRect(0, GROUND, W, H - GROUND);
+    ctx.fillStyle = T.line; ctx.fillRect(0, GROUND, W, 1);
+    ctx.fillStyle = T.dash;
     const o1 = -Math.floor(dist) % 16;
     for (let x = o1; x < W; x += 16) { ctx.fillRect(x, GROUND + 6, 8, 1); ctx.fillRect(x + 8, GROUND + 14, 8, 1); }
-    if (!g || state === "title") return;
+    ctx.globalAlpha = 1;
+  }
+  function drawGaps(dist) {
     for (const o of g.obs) {
+      if (o.type === "tunnel") {                   // the shaded inside of a tunnel
+        const sx = Math.round(o.x - dist);
+        if (sx < W && sx + o.w > 0) { ctx.fillStyle = "rgba(11, 13, 31, 0.35)"; ctx.fillRect(sx, CEIL, o.w, GROUND - CEIL); }
+      }
       if (o.type !== "gap") continue;
       const sx = Math.round(o.x - dist);
       if (sx > W || sx + o.w < 0) continue;
@@ -535,23 +1088,61 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
       text(o.w >= 38 ? "0 REVIEWS" : "0", sx + Math.floor(o.w / 2), GROUND + 9, PAL.muted, 1, "center");
     }
   }
+  function drawCeiling(sx, w, label) {
+    const h = CEIL;                                // hazard stripes, slide under them
+    ctx.fillStyle = PAL.ink; ctx.fillRect(sx - 1, 0, w + 2, h + 1);
+    ctx.fillStyle = PAL.orange; ctx.fillRect(sx, 0, w, h);
+    ctx.save(); ctx.beginPath(); ctx.rect(sx, 0, w, h); ctx.clip();
+    ctx.fillStyle = PAL.ink;
+    for (let y = 0; y < h - 10; y++) {
+      for (let x = sx - (y % 8) - 8; x < sx + w; x += 8) ctx.fillRect(x, y, 3, 1);
+    }
+    ctx.restore();
+    ctx.fillStyle = PAL.ink; ctx.fillRect(sx, h - 10, w, 10);
+    ctx.fillStyle = PAL.yellow; ctx.fillRect(sx, h - 1, w, 1);
+    // the label is repeated along long tunnels
+    const lw = textW(label), stepX = lw + 40, cx = sx + Math.floor(w / 2);
+    const n = Math.max(0, Math.floor((w / 2 - lw / 2 - 4) / stepX));
+    for (let k = -n; k <= n; k++) text(label, cx + k * stepX, h - 8, PAL.yellow, 1, "center");
+  }
+  function drawTunnel(sx, w) {                   // a dark brick block with a striped lip
+    const lip = CEIL - 16;
+    ctx.fillStyle = PAL.ink; ctx.fillRect(sx - 1, 0, w + 2, CEIL + 1);
+    ctx.fillStyle = "#34305a"; ctx.fillRect(sx, 0, w, lip);
+    ctx.fillStyle = "#1d1a3a";
+    for (let y = 5; y < lip; y += 6) {
+      ctx.fillRect(sx, y, w, 1);
+      for (let x = sx + ((y / 6) % 2 ? 6 : 0); x < sx + w; x += 12) ctx.fillRect(x, y - 5, 1, 5);
+    }
+    ctx.fillStyle = "#4a4580"; ctx.fillRect(sx, 0, 2, lip); ctx.fillRect(sx + w - 2, 0, 2, lip);
+    ctx.save(); ctx.beginPath(); ctx.rect(sx, lip, w, 6); ctx.clip();
+    ctx.fillStyle = PAL.orange; ctx.fillRect(sx, lip, w, 6);
+    ctx.fillStyle = PAL.ink;
+    for (let y = lip; y < lip + 6; y++) {
+      for (let x = sx - ((y - lip) % 8) - 8; x < sx + w; x += 8) ctx.fillRect(x, y, 3, 1);
+    }
+    ctx.restore();
+    ctx.fillStyle = PAL.ink; ctx.fillRect(sx, CEIL - 10, w, 10);
+    ctx.fillStyle = PAL.yellow; ctx.fillRect(sx, CEIL - 1, w, 1);
+    const label = "CRUNCH TUNNEL", lw = textW(label), stepX = lw + 40, cx = sx + Math.floor(w / 2);
+    const n = Math.max(0, Math.floor((w / 2 - lw / 2 - 4) / stepX));
+    for (let k = -n; k <= n; k++) text(label, cx + k * stepX, CEIL - 8, PAL.yellow, 1, "center");
+  }
   function drawObstacles() {
     for (const o of g.obs) {
       if (o.dead || o.type === "gap") continue;
       const sx = Math.round(o.x - g.dist);
       if (sx > W || sx + o.w < 0) continue;
-      if (o.type === "bug") { ctx.drawImage(BUG[Math.floor(clock * 8) % 2], sx, GROUND - 8); continue; }
-      const h = GROUND - 10;                        // CRUNCH: a low ceiling bar, slide under it
-      ctx.fillStyle = PAL.ink; ctx.fillRect(sx - 1, 0, o.w + 2, h + 1);
-      ctx.fillStyle = PAL.orange; ctx.fillRect(sx, 0, o.w, h);
-      ctx.save(); ctx.beginPath(); ctx.rect(sx, 0, o.w, h); ctx.clip();
-      ctx.fillStyle = PAL.ink;
-      for (let y = 0; y < h - 10; y++) {
-        for (let x = sx - (y % 8) - 8; x < sx + o.w; x += 8) ctx.fillRect(x, y, 3, 1);
+      if (o.type === "bug") ctx.drawImage(BUG[Math.floor(clock * 8) % 2], sx - 1, GROUND - 9);
+      else if (o.type === "spike") ctx.drawImage(SPIKE[Math.floor(clock * 8) % 2], sx - 1, GROUND - SPIKE_H - 1);
+      else if (o.type === "crunch") drawCeiling(sx, o.w, "CRUNCH");
+      else {
+        drawTunnel(sx, o.w);
+        if (!o.counted && sx > PX + 30) {          // a warning sign before the entrance
+          text("HOLD", sx - 4, CEIL - 26, PAL.yellow, 1, "right");
+          text("SLIDE", sx - 4, CEIL - 19, PAL.yellow, 1, "right");
+        }
       }
-      ctx.restore();
-      ctx.fillStyle = PAL.ink; ctx.fillRect(sx, h - 10, o.w, 10);
-      text("CRUNCH", sx + Math.floor(o.w / 2), h - 7, PAL.yellow, 1, "center");
     }
   }
   function drawItems() {
@@ -572,11 +1163,17 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
     }
   }
   function drawPlayer() {
-    if (g.invuln > 0 && state === "play" && Math.floor(clock * 20) % 2) return;
+    // ~1 s of invincibility after a hit: blink (or stay half see-through with reduced motion)
+    if (g.invuln > 0 && state === "play") {
+      if (REDUCED) ctx.globalAlpha = 0.45;
+      else if (Math.floor(clock * 16) % 2) return;
+    }
     const y = Math.round(p.y);
-    if (state === "play" && p.onGround && p.slideT > 0) ctx.drawImage(SLIDE, PX - 1, y - 7);
-    else if (!p.onGround || state === "dying") ctx.drawImage(JUMP, PX, y - 13);
-    else ctx.drawImage(RUN[[0, 1, 2, 1][Math.floor(p.anim) % 4]], PX, y - 13);
+    if (state === "play" && p.hop) ctx.drawImage(HOP, PX, y - 6);
+    else if (state === "play" && sliding()) ctx.drawImage(SLIDE, PX - 2, y - 8);
+    else if (!p.onGround || state === "dying") ctx.drawImage(JUMP, PX - 1, y - 14);
+    else ctx.drawImage(RUN[[0, 1, 2, 1][Math.floor(p.anim) % 4]], PX - 1, y - 14);
+    ctx.globalAlpha = 1;
     if (g.shield > 0 && (g.shield > 2 || Math.floor(clock * 8) % 2)) {
       const b = playerBox(), x0 = b.x - 4, y0 = b.y - 4, w = b.w + 8, hh = b.h + 6;
       ctx.fillStyle = PAL.teal;
@@ -591,11 +1188,44 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
     for (const f of g.floats) shadowText(f.text, Math.round(f.x), Math.round(f.y), f.col);
   }
   const pad = n => String(n).padStart(6, "0");
+  const MUTE_BOX = { x: 2, y: H - 12, w: 13, h: 11 };
+  const SLIDE_ZONE = { x: Math.round(W * 0.7), y: Math.round(H * 0.55), w: W, h: H };
+  const SLIDE_BTN = { x: W - 46, y: H - 21, w: 42, h: 17 };
+  function drawMute() {
+    const b = MUTE_BOX;
+    ctx.fillStyle = "rgba(11, 13, 31, 0.75)"; ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.drawImage(muted ? SOUND_OFF : SOUND_ON, b.x + 2, b.y + 2);
+  }
+  function drawBanner() {
+    const B = g.banner, T = themeOf(B.L);
+    if (B.endless) {
+      const w = 170, x0 = (W - w) / 2, y0 = 28;
+      frameBox(x0, y0, w, 34, T.accent, "rgba(11, 13, 31, 0.88)");
+      shadowText("ENDLESS MODE", W / 2, y0 + 6, PAL.yellow, 2, "center");
+      text("CHASE YOUR HIGH SCORE", W / 2, y0 + 22, PAL.text, 1, "center");
+      return null;
+    }
+    if (B.L >= TU) {                               // the final level: name + logo
+      const w = 204, x0 = (W - w) / 2, y0 = 16;
+      frameBox(x0, y0, w, 78, T.accent, "rgba(11, 13, 31, 0.9)");
+      text("FINAL LEVEL", W / 2, y0 + 5, PAL.muted, 1, "center");
+      shadowText("TUWAIQ ACADEMY", W / 2, y0 + 13, T.accent, 3, "center");
+      text("REACH " + fmtInt(GOAL) + " POINTS!", W / 2, y0 + 68, PAL.yellow, 1, "center");
+      return { x: W / 2 - 60, y: y0 + 34, w: 120, h: 28 };
+    }
+    const w = 186, x0 = (W - w) / 2, y0 = 22;
+    frameBox(x0, y0, w, 52, T.accent, "rgba(11, 13, 31, 0.88)");
+    text("LEVEL " + (B.L + 1) + " OF " + (TU + 1) + ": " + T.name, W / 2, y0 + 5, PAL.muted, 1, "center");
+    shadowText(YEARS[B.L], W / 2, y0 + 13, T.accent, 4, "center");
+    shadowText(fmtInt(REL[B.L]) + " INDIE RELEASES", W / 2, y0 + 37, PAL.yellow, 2, "center");
+    return null;
+  }
   function drawHUD() {
+    let logo = null;
     ctx.fillStyle = "rgba(11, 13, 31, 0.6)"; ctx.fillRect(0, 0, W, 11);
     const s = score();
     shadowText("SCORE " + pad(s), 4, 3, PAL.text);
-    shadowText("YEAR " + levelName(g.L), W / 2, 3, PAL.yellow, 1, "center");
+    shadowText(g.L < TU ? "YEAR " + YEARS[g.L] : levelName(g.L), W / 2, 3, themeOf(g.L).accent, 1, "center");
     shadowText("BEST " + pad(Math.max(best, s)), W - 4, 3, PAL.text, 1, "right");
     let x = 4;
     for (const k of POW_KEYS) {
@@ -607,57 +1237,84 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
       ctx.fillStyle = P.col; ctx.fillRect(x + 1, 15, Math.ceil(24 * g[k] / P.dur), 3);
       x += 32;
     }
-    if (g.banner) {
-      const w = textW(g.banner.text) + 12;
-      const x0 = Math.floor((W - w) / 2);
-      ctx.fillStyle = PAL.ink; ctx.fillRect(x0, 26, w, 13);
-      ctx.fillStyle = PAL.yellow; ctx.fillRect(x0, 26, w, 1); ctx.fillRect(x0, 38, w, 1);
-      ctx.fillRect(x0, 26, 1, 13); ctx.fillRect(x0 + w - 1, 26, 1, 13);
-      text(g.banner.text, W / 2, 30, PAL.yellow, 1, "center");
+    for (let i = 0; i < LIVES; i++) {              // lives as pixel hearts, top right
+      const hx = W - 4 - (LIVES - i) * 9;
+      ctx.fillStyle = PAL.ink; ctx.fillRect(hx - 1, 13, 9, 8);
+      ctx.drawImage(i < g.lives ? HEART : HEART_EMPTY, hx, 14);
     }
+    if (g.banner && state === "play") logo = drawBanner();
     if (g.toast) {
       const t = g.toast, w = Math.max(textW(t.title), textW(t.fact)) + 12;
-      const x0 = Math.floor((W - w) / 2), y0 = 44;
+      const x0 = Math.floor((W - w) / 2), y0 = g.banner ? 98 : 44;
       ctx.fillStyle = PAL.ink; ctx.fillRect(x0, y0, w, 20);
       ctx.fillStyle = t.col; ctx.fillRect(x0, y0, w, 1); ctx.fillRect(x0, y0 + 19, w, 1);
       text(t.title, W / 2, y0 + 4, t.col, 1, "center");
       text(t.fact, W / 2, y0 + 11, PAL.text, 1, "center");
     }
+    if (touchUsed && state === "play") {            // the touch slide button
+      const b = SLIDE_BTN, on = input.slideTouch !== null;
+      frameBox(b.x, b.y, b.w, b.h, on ? PAL.yellow : PAL.muted, on ? "rgba(255, 210, 63, 0.35)" : "rgba(11, 13, 31, 0.55)");
+      text("SLIDE", b.x + b.w / 2, b.y + 6, on ? PAL.yellow : PAL.text, 1, "center");
+    }
+    drawMute();
+    return logo;
   }
   function dim(a) { ctx.fillStyle = "rgba(11, 13, 31, " + a + ")"; ctx.fillRect(0, 0, W, H); }
   const blink = () => Math.floor(clock * 2.5) % 2 === 0;
 
   function drawTitle() {
-    ctx.drawImage(RUN[[0, 1, 2, 1][Math.floor(clock * 10) % 4]], PX, GROUND - 13);
-    dim(0.35);
-    shadowText("INDIE RUN", W / 2, 18, PAL.yellow, 4, "center");
-    text("A STEAM SURVIVAL RUN, 2020 — 2024", W / 2, 44, PAL.muted, 1, "center");
-    if (blink()) shadowText("PRESS START", W / 2, 58, PAL.yellow, 2, "center");
-    shadowText("CLICK TO FOCUS, SPACE TO JUMP", W / 2, 78, PAL.text, 1, "center");
-    text("SPACE / UP / W: JUMP, PRESS TWICE TO DOUBLE JUMP", W / 2, 90, PAL.muted, 1, "center");
-    text("DOWN / S: SLIDE      P: PAUSE", W / 2, 98, PAL.muted, 1, "center");
-    text("TOUCH: TAP = JUMP, SWIPE DOWN = SLIDE", W / 2, 106, PAL.muted, 1, "center");
-    if (best > 0) shadowText("BEST " + pad(best), W / 2, 118, PAL.teal, 1, "center");
+    ctx.drawImage(RUN[[0, 1, 2, 1][Math.floor(clock * 10) % 4]], PX - 1, GROUND - 14);
+    dim(0.4);
+    shadowText("INDIE RUN", W / 2, 12, PAL.yellow, 4, "center");
+    text("SURVIVE 2020 — 2024, THEN THE TUWAIQ ACADEMY LEVEL", W / 2, 37, PAL.muted, 1, "center");
+    if (blink()) shadowText("PRESS START", W / 2, 49, PAL.yellow, 2, "center");
+    shadowText("CLICK TO FOCUS, SPACE TO JUMP", W / 2, 66, PAL.text, 1, "center");
+    text("SPACE / UP / W: JUMP, PRESS TWICE TO DOUBLE JUMP", W / 2, 77, PAL.muted, 1, "center");
+    text("DOWN / S: HOLD TO SLIDE (JUMP WHILE SLIDING IN A TUNNEL = HOP)", W / 2, 85, PAL.muted, 1, "center");
+    text("P: PAUSE     M: SOUND ON / OFF", W / 2, 93, PAL.muted, 1, "center");
+    text("TOUCH: TAP = JUMP, HOLD SLIDE BUTTON OR SWIPE DOWN = SLIDE", W / 2, 101, PAL.muted, 1, "center");
+    shadowText("3 LIVES. REACH " + fmtInt(GOAL) + " POINTS!", W / 2, 113, PAL.teal, 1, "center");
+    if (best > 0) shadowText("BEST " + pad(best), W / 2, 123, PAL.text, 1, "center");
+    drawMute();
   }
   function drawPaused() {
     dim(0.6);
     shadowText("PAUSED", W / 2, 52, PAL.yellow, 3, "center");
     text("PRESS P OR CLICK TO RESUME", W / 2, 80, PAL.text, 1, "center");
+    drawMute();
+  }
+  const GOAL_BTNS = [{ label: "CONTINUE", x: W / 2 - 74, y: 100, w: 70, h: 15 },
+                     { label: "FINISH", x: W / 2 + 4, y: 100, w: 70, h: 15 }];
+  function drawGoal() {
+    dim(0.8);
+    shadowText("CONGRATULATIONS!", W / 2, 7, PAL.yellow, 3, "center");
+    shadowText("YOU MADE IT", W / 2, 26, PAL.text, 2, "center");
+    text("THANK YOU FOR PLAYING, AND THANK YOU, TUWAIQ ACADEMY!", W / 2, 41, PAL.muted, 1, "center");
+    text("SCORE " + fmtInt(score()), W / 2, 89, PAL.teal, 1, "center");
+    GOAL_BTNS.forEach((b, i) => {
+      const on = i === goalSel;
+      frameBox(b.x, b.y, b.w, b.h, on ? PAL.yellow : PAL.muted, on ? "#3a2a8a" : PAL.ink);
+      text((on ? "> " : "") + b.label, b.x + b.w / 2, b.y + 5, on ? PAL.yellow : PAL.text, 1, "center");
+    });
+    text("CONTINUE = ENDLESS RUN     FINISH = FINAL SCORE", W / 2, 122, PAL.muted, 1, "center");
+    text("ARROWS + ENTER, C / F, OR TAP A BUTTON", W / 2, 131, PAL.muted, 1, "center");
+    drawMute();
+    return { x: W / 2 - 60, y: 50, w: 120, h: 34 };
   }
   function drawOver() {
     dim(0.72);
-    shadowText("GAME OVER", W / 2, 12, PAL.orange, 4, "center");
-    shadowText("SCORE " + score(), W / 2, 40, PAL.text, 2, "center");
+    if (g.finished) shadowText("RUN COMPLETE", W / 2, 12, PAL.teal, 3, "center");
+    else shadowText("GAME OVER", W / 2, 12, PAL.orange, 4, "center");
+    shadowText((g.finished ? "FINAL SCORE " : "SCORE ") + score(), W / 2, 40, PAL.text, 2, "center");
     text("BEST " + best + (newBest ? "   NEW BEST!" : ""), W / 2, 56, newBest && blink() ? PAL.yellow : PAL.muted, 1, "center");
-    text("YEAR REACHED: " + levelName(g.L) + "     STARS: " + g.stars, W / 2, 64, PAL.muted, 1, "center");
+    text("REACHED: " + levelName(g.L) + "     STARS: " + g.stars, W / 2, 64, PAL.muted, 1, "center");
     const lines = wrap(fact, 60), bh = lines.length * 8 + 16, y0 = 76;
     const bw = Math.max.apply(null, lines.map(l => textW(l))) + 16, x0 = Math.floor((W - bw) / 2);
-    ctx.fillStyle = PAL.panel; ctx.fillRect(x0, y0, bw, bh);
-    ctx.fillStyle = PAL.yellow; ctx.fillRect(x0, y0, bw, 1); ctx.fillRect(x0, y0 + bh - 1, bw, 1);
-    ctx.fillRect(x0, y0, 1, bh); ctx.fillRect(x0 + bw - 1, y0, 1, bh);
+    frameBox(x0, y0, bw, bh, PAL.yellow, PAL.panel);
     text("REAL DATA", W / 2, y0 + 4, PAL.yellow, 1, "center");
     lines.forEach((l, i) => text(l, W / 2, y0 + 12 + i * 8, PAL.text, 1, "center"));
     if (stateT > 0.6 && blink()) shadowText("PRESS SPACE OR TAP TO RESTART", W / 2, 140, PAL.yellow, 1, "center");
+    drawMute();
   }
 
   function render() {
@@ -667,22 +1324,44 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
     const sh = playing && g.shake > 0 && !REDUCED ? g.shake * 0.5 : 0;
     ctx.translate(Math.round(rand(-sh, sh)), Math.round(rand(-sh, sh)));
     const dist = playing ? g.dist : titleScroll;
-    drawBackground(dist);
-    drawGround(dist);
-    if (playing) { drawItems(); drawObstacles(); drawPlayer(); drawEffects(); }
+    if (!playing) drawScene(THEMES[0], dist, 1);
+    else if (g.fade > 0) {                         // cross-fade into the new level's theme
+      drawScene(themeOf(g.fromL), dist, 1);
+      drawScene(themeOf(g.L), dist, 1 - g.fade / 0.6);
+    } else drawScene(themeOf(g.L), dist, 1);
+    let logo = null;
+    if (playing) { drawGaps(dist); drawItems(); drawObstacles(); drawPlayer(); drawEffects(); }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    if (!playing) { drawTitle(); return; }
-    drawHUD();
-    if (state === "paused") drawPaused();
-    if (state === "over") drawOver();
+    if (!playing) drawTitle();
+    else {
+      logo = drawHUD();
+      if (state === "paused") drawPaused();
+      if (state === "goal") logo = drawGoal();
+      if (state === "over") drawOver();
+    }
+    placeLogo(logo);
   }
 
   // ---------------------------------------------------------------- input
   const JUMP_KEYS = new Set(["Space", "ArrowUp", "KeyW"]);
   const SLIDE_KEYS = new Set(["ArrowDown", "KeyS"]);
-  function startSlide(t) {
-    p.slideT = Math.max(p.slideT, t);
-    if (!p.onGround) p.fastFall = 0.5;
+  // Physical keys held right now. A keydown for a key already held is OS key repeat, even when
+  // the browser does not set event.repeat; repeats never jump again or restart a slide.
+  const keysDown = new Set();
+  const KEY_NAMES = { " ": "Space", Spacebar: "Space", Enter: "Enter", ArrowUp: "ArrowUp",
+                      ArrowDown: "ArrowDown", ArrowLeft: "ArrowLeft", ArrowRight: "ArrowRight", Down: "ArrowDown", Up: "ArrowUp" };
+  function keyCode(e) {           // event.code, or a fallback from event.key
+    if (e.code) return e.code;
+    const k = e.key || "";
+    return KEY_NAMES[k] || (k.length === 1 && /[a-z]/i.test(k) ? "Key" + k.toUpperCase() : k);
+  }
+  function refreshSlide() {
+    const held = input.slideKeys.size > 0 || input.slideTouch !== null;
+    if (held && !input.slideHeld && state === "play") {
+      p.slideMin = 0.15;                          // a quick tap still shows a short slide
+      if (!p.onGround && !p.hop) p.fastFall = 0.5;
+    }
+    input.slideHeld = held;
   }
   function tapAction() {
     if (state === "title") start();
@@ -691,56 +1370,117 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
     else if (state === "play") p.buffer = 0.12;
   }
   addEventListener("keydown", e => {
-    const c = e.code, isJump = JUMP_KEYS.has(c), isSlide = SLIDE_KEYS.has(c);
-    if (isJump || isSlide || c === "KeyP") e.preventDefault();
-    if (e.repeat) return;
+    const c = keyCode(e), isJump = JUMP_KEYS.has(c), isSlide = SLIDE_KEYS.has(c);
+    if (isJump || isSlide || c === "KeyP" || c === "KeyM") e.preventDefault();
+    if (e.repeat || keysDown.has(c)) return;      // key repeat
+    keysDown.add(c);
+    unlockAudio();                                 // browsers start audio only after a gesture
+    if (c === "KeyM") { toggleMute(); return; }
     if (state === "title" || state === "over") { if (isJump || c === "Enter") tapAction(); return; }
     if (state === "paused") { if (c === "KeyP" || isJump) resume(); return; }
+    if (state === "goal") {
+      if (c === "ArrowLeft" || c === "KeyA" || c === "ArrowUp") { if (goalSel !== 0) sfx("blip"); goalSel = 0; }
+      else if (c === "ArrowRight" || c === "KeyD" || c === "ArrowDown") { if (goalSel !== 1) sfx("blip"); goalSel = 1; }
+      else if (c === "Enter" || c === "Space") chooseGoal(goalSel);
+      else if (c === "KeyC") chooseGoal(0);
+      else if (c === "KeyF") chooseGoal(1);
+      return;
+    }
     if (state !== "play") return;
     if (c === "KeyP") { pause(); return; }
     if (isJump) { input.jumpHeld = true; p.buffer = 0.12; }
-    if (isSlide) { input.slideHeld = true; startSlide(0.45); }
+    if (isSlide) { input.slideKeys.add(c); refreshSlide(); }
   });
   addEventListener("keyup", e => {
-    if (JUMP_KEYS.has(e.code)) {
+    const c = keyCode(e);
+    keysDown.delete(c);
+    if (JUMP_KEYS.has(c)) {
       input.jumpHeld = false;
-      if (state === "play" && p.vy < -130) p.vy = -130;   // short tap = short hop
+      if (state === "play" && !p.hop && p.vy < -130) p.vy = -130;   // short tap = short hop
     }
-    if (SLIDE_KEYS.has(e.code)) input.slideHeld = false;
+    if (SLIDE_KEYS.has(c)) { input.slideKeys.delete(c); refreshSlide(); }
   });
+  // Pointer position in canvas pixels
+  function toCanvas(clientX, clientY) {
+    const r = cv.getBoundingClientRect();
+    return { x: (clientX - r.left - BORDER) * W / (r.width - 2 * BORDER),
+             y: (clientY - r.top - BORDER) * H / (r.height - 2 * BORDER) };
+  }
+  const inBox = (q, b) => q.x >= b.x && q.x < b.x + b.w && q.y >= b.y && q.y < b.y + b.h;
+  // Clicks and taps on the mute icon and the goal buttons; returns true when handled
+  function pressUI(q) {
+    if (inBox(q, MUTE_BOX)) { toggleMute(); return true; }
+    if (state === "goal") {
+      GOAL_BTNS.forEach((b, i) => { if (inBox(q, b)) { goalSel = i; chooseGoal(i); } });
+      return true;
+    }
+    return false;
+  }
   cv.addEventListener("mousedown", e => {
     e.preventDefault();
     try { window.focus(); cv.focus(); } catch (err) { /* ignore */ }
-    tapAction();
+    if (!pressUI(toCanvas(e.clientX, e.clientY))) tapAction();
   });
-  let touch = null;
+  // Touch: tap = jump; hold the SLIDE button (bottom right), or swipe down and hold, to slide.
+  // Fingers are tracked one by one, so you can hold SLIDE with one and tap with another.
+  const touches = {};
   cv.addEventListener("touchstart", e => {
     e.preventDefault();
-    const t = e.changedTouches[0];
-    touch = { y: t.clientY, swiped: false };
+    touchUsed = true;
+    for (const t of e.changedTouches) {
+      const q = toCanvas(t.clientX, t.clientY);
+      if (pressUI(q)) continue;
+      if (state === "play" && inBox(q, SLIDE_ZONE)) {
+        input.slideTouch = t.identifier; refreshSlide();
+        touches[t.identifier] = { slide: true };
+      } else touches[t.identifier] = { y: t.clientY, swiped: false, t0: performance.now() };
+    }
   }, { passive: false });
   cv.addEventListener("touchmove", e => {
     e.preventDefault();
-    if (!touch || touch.swiped) return;
-    if (e.changedTouches[0].clientY - touch.y > 24) {
-      touch.swiped = true;
-      if (state === "play") startSlide(0.7);
+    for (const t of e.changedTouches) {
+      const tr = touches[t.identifier];
+      if (!tr || tr.slide || tr.swiped) continue;
+      if (t.clientY - tr.y > 24) {
+        tr.swiped = true;
+        if (state === "play") { input.slideTouch = t.identifier; refreshSlide(); }
+      }
     }
   }, { passive: false });
-  cv.addEventListener("touchend", e => {
+  // iOS Safari can send touchcancel instead of touchend when two fingers are used (hold SLIDE,
+  // tap to hop): a cancelled finger that is still on the screen keeps sliding, and a short
+  // cancelled tap still counts as a tap
+  function touchEnd(e) {
     e.preventDefault();
-    const swiped = touch && touch.swiped;
-    touch = null;
-    if (!swiped) tapAction();
-  }, { passive: false });
+    const still = new Set(Array.from(e.touches || [], t => t.identifier));
+    for (const t of e.changedTouches) {
+      if (e.type === "touchcancel" && still.has(t.identifier)) continue;
+      const tr = touches[t.identifier];
+      delete touches[t.identifier];
+      if (input.slideTouch === t.identifier) { input.slideTouch = null; refreshSlide(); }
+      const tap = tr && !tr.slide && !tr.swiped &&
+        (e.type === "touchend" || performance.now() - tr.t0 < 300);
+      if (tap) tapAction();
+    }
+  }
+  cv.addEventListener("touchend", touchEnd, { passive: false });
+  cv.addEventListener("touchcancel", touchEnd, { passive: false });
+  // Every gesture Safari accepts for audio (iOS counts touchend, not touchstart) unlocks it,
+  // synchronously, before anything else
+  ["pointerdown", "touchend", "click"].forEach(type =>
+    addEventListener(type, unlockAudio, { capture: true, passive: true }));
   // Pause automatically when the game loses focus
-  addEventListener("blur", pause);
-  document.addEventListener("visibilitychange", () => { if (document.hidden) pause(); });
+  addEventListener("blur", () => { keysDown.clear(); pause(); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) { keysDown.clear(); pause(); } });
 
   // ---------------------------------------------------------------- main loop (fixed timestep)
+  // At most 4 steps (67 ms) per frame: 30 fps (Safari in Low Power Mode or a throttled iframe)
+  // still runs at full speed, but after a stall the game slows down for a moment instead of
+  // jumping ahead in one burst (the world used to leap up to 250 ms while nothing was drawn)
+  const MAX_FRAME = 4 * STEP;
   let last = performance.now(), acc = 0;
   function frame(now) {
-    acc += Math.min(0.25, Math.max(0, (now - last) / 1000));
+    acc += Math.min(MAX_FRAME, Math.max(0, (now - last) / 1000));
     last = now;
     while (acc >= STEP) { clock += STEP; update(STEP); acc -= STEP; }
     render();
@@ -748,14 +1488,51 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
   }
   requestAnimationFrame(frame);
 
+  // Internals for the offline fairness check (tools/check_indie_run.js). Only exposed when a
+  // test defines window.INDIE_RUN_LAB before the game loads; the dashboard never does.
+  if (window.INDIE_RUN_LAB) {
+    Object.defineProperties(window.INDIE_RUN_LAB, Object.getOwnPropertyDescriptors({
+      consts: { STEP, GROUND, PX, TU, LEVEL_TIME, CEIL, SPIKE_W, W },
+      start() { reset(); state = "play"; },
+      get g() { return g; },
+      get p() { return p; },
+      set p(v) { p = v; },
+      input, speedFor, advanceWorld, updatePlayer, firstHit, sliding,
+    }));
+  }
+
   // Read-only hook for automated tests
   window.INDIE_RUN = {
     get state() { return state; },
     get score() { return g ? score() : 0; },
     get year() { return g ? levelName(g.L) : null; },
+    get level() { return g ? g.L : null; },
+    get theme() { return g ? themeOf(g.L).name : THEMES[0].name; },
+    get levelTime() { return g ? g.levelT : 0; },
+    get lives() { return g ? g.lives : LIVES; },
+    get invuln() { return g ? g.invuln : 0; },
+    get speed() { return g ? g.speed : 0; },
+    get muted() { return muted; },
+    get audioState() { return actx ? actx.state : "none"; },
+    get sfxPlayed() { return sfxPlayed; },
+    get banner() { return g && g.banner ? (g.banner.endless ? "ENDLESS" : levelName(g.banner.L)) : null; },
+    get logoVisible() { return logoVisible; },
+    get player() {
+      return p ? { y: p.y, onGround: p.onGround, sliding: g ? sliding() : false, hop: p.hop } : null;
+    },
+    get stats() {
+      return g ? { hits: g.hits, tunnelsPassed: g.tunnelsPassed, hopsCleared: g.hopsCleared,
+                   stars: g.stars, finished: g.finished, endless: g.endless } : null;
+    },
     get ahead() {
       const o = g && g.obs.find(o => !o.dead && o.x + o.w - g.dist > PX);
       return o ? { type: o.type, dx: o.x - g.dist - (PX + 10), w: o.w } : null;
+    },
+    // the next obstacles, nearest first (dx = distance from the player's front edge)
+    get obstacles() {
+      if (!g) return [];
+      return g.obs.filter(o => !o.dead && o.x + o.w - g.dist > PX - 4).slice(0, 6)
+        .map(o => ({ type: o.type, dx: o.x - g.dist - (PX + 10), w: o.w }));
     },
   };
 })();

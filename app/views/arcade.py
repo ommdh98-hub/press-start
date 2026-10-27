@@ -1,4 +1,5 @@
 """ARCADE: Indie Run, a canvas game fed with real numbers from the clean data."""
+import base64
 import json
 import re
 from pathlib import Path
@@ -10,6 +11,7 @@ import common as U
 from common import A, C, card, key_insights
 
 GAME_FILE = Path(__file__).resolve().parents[1] / "game" / "indie_run.html"
+LOGO_FILE = GAME_FILE.parent / "assets" / "tuwaiq_logo.png"   # official logo, used as is
 GAME_MAX_W = 1000                                  # same cap as MAX_W in indie_run.html
 GAME_FRAME = 10                                    # canvas border (2 x 3 px) + shadow (4 px)
 GAME_FRAME_H = GAME_MAX_W * 9 // 16 + GAME_FRAME   # 572 px
@@ -42,11 +44,15 @@ def arcade_numbers():
 
 
 def game_html(numbers):
-    """The game page with the real numbers written into its GAME_DATA variable."""
+    """The game page with the real numbers in GAME_DATA and the logo as a data URI
+    (the component iframe cannot load files from the repo)."""
     payload = json.dumps(numbers).replace("</", "<\\/")
-    return re.sub(r"/\*GAME_DATA\*/.*?/\*END_GAME_DATA\*/",
+    logo = "data:image/png;base64," + base64.b64encode(LOGO_FILE.read_bytes()).decode("ascii")
+    html = re.sub(r"/\*GAME_DATA\*/.*?/\*END_GAME_DATA\*/",
                   lambda m: f"/*GAME_DATA*/{payload}/*END_GAME_DATA*/",
                   GAME_FILE.read_text(encoding="utf-8"), count=1, flags=re.S)
+    return re.sub(r"/\*TUWAIQ_LOGO\*/.*?/\*END_TUWAIQ_LOGO\*/",
+                  lambda m: f'/*TUWAIQ_LOGO*/"{logo}"/*END_TUWAIQ_LOGO*/', html, count=1, flags=re.S)
 
 
 U.filters_note()
@@ -64,9 +70,10 @@ with card("arcade"):
 with card("arcade_data"):
     st.markdown("#### How the game uses the data")
     st.markdown(
-        f"- **Difficulty follows real release counts.** Each level is a release year. Speed "
-        f"and obstacle density grow with that year's Indie releases in the clean data: "
-        f"{rel[first]:,} in {first} → {rel[last]:,} in {last}.\n"
+        f"- **Difficulty follows real release counts.** Each 15-second level is a release "
+        f"year. Speed and obstacle density grow with that year's Indie releases in the clean "
+        f"data: {rel[first]:,} in {first} → {rel[last]:,} in {last}. A final Tuwaiq Academy "
+        f"level follows; reaching 10,000 points completes the run.\n"
         f"- **Power-ups come from factors associated with Indie hits.** Multiplayer "
         f"({pw['multiplayer']}% hit rate vs {pw['single_player']}% single-player), "
         f"Localization (10+ languages: {pw['languages_10plus']}% vs {pw['one_language']}% "
