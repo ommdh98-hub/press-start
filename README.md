@@ -6,7 +6,7 @@ An exploratory data analysis and interactive Streamlit dashboard for one questio
 
 > **If you are a small Indie developer launching on Steam, what can past games tell you about your odds — and where are they better?**
 
-**Author:** Faisal Mohammed Al-Fifi — Computer Science (AI & Data Science), Prince Sattam bin Abdulaziz University
+**Author:** Omar Mohammed Al-Faifi — Computer Science (AI & Data Science), Prince Sattam bin Abdulaziz University
 
 ![Opportunity map](reports/figures/07_opportunity_map.png)
 
