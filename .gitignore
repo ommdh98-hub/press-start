@@ -15,7 +15,3 @@ venv/
 
 # Streamlit secrets
 .streamlit/secrets.toml
-
-# Local project notes (kept on this Mac only)
-CLAUDE.md
-.claude/
