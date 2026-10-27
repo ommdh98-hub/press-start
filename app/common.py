@@ -25,7 +25,7 @@ BOX = f"border: 3px solid {INK}; box-shadow: 4px 4px 0 {INK};"
 PAGES = [("views/home.py", "HOME"), ("views/story.py", "STORY MODE"),
          ("views/hit_lab.py", "HIT LAB"), ("views/arcade.py", "ARCADE")]
 # Widget values that must survive a page switch (Streamlit drops values of unseen widgets)
-PERSIST_PREFIXES = ("flt_", "pred_", "p2_")
+PERSIST_PREFIXES = ("flt_", "pred_")
 
 
 def inject_css():
@@ -108,9 +108,6 @@ def inject_css():
   .pu {{margin: 0 0 6px 0;}}
   .pu-tag {{font-family: {PIXEL}; font-size: 0.6rem; color: {INK}; background: {K['accent']};
       padding: 3px 6px; margin-right: 8px;}}
-  .verdict {{font-family: {PIXEL}; font-size: 1rem; color: {K['accent']}; text-align: center;
-      line-height: 1.6; margin: 34px 0 8px;}}
-  [class*="st-key-card_"] [class*="st-key-card_"] {{background: {K['bg']};}}
   .moved p {{margin: 0 0 4px 0;}}
   .msg-label {{font-family: {PIXEL}; font-size: 0.75rem; color: {K['accent']}; margin-bottom: 4px;}}
   .big {{font-family: {PIXEL}; font-size: 0.95rem; color: {K['accent']}; margin: 2px 0 10px 0;}}

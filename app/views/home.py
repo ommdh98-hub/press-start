@@ -25,7 +25,7 @@ MODES = [
      "The analysis: Indie hit rates, opportunities, hidden gems and the data pipeline.",
      "START STORY"),
     ("lab", "views/hit_lab.py", "HIT LAB", "Predict your next hit",
-     "Build a game idea and get a rank, power-ups and a Player 1 vs Player 2 duel.",
+     "Build a game idea and get its hit chance, rank and power-ups.",
      "OPEN HIT LAB"),
     ("arcade", "views/arcade.py", "ARCADE", "Play Indie Run",
      "A pixel endless runner whose levels follow real Indie release counts.",

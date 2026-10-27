@@ -1,5 +1,7 @@
 # Press Start: What 36,000 Steam games reveal about Indie success
 
+**Live demo: https://press-start.streamlit.app**
+
 An exploratory data analysis and interactive Streamlit dashboard for one question:
 
 > **If you are a small Indie developer launching on Steam, what can past games tell you about your odds — and where are they better?**
@@ -156,11 +158,13 @@ streamlit run app/app.py
 
 Open `notebooks/visual_analysis.ipynb` in VS Code (Jupyter extension) to see the full analysis with outputs.
 
-**Online (Streamlit Community Cloud):** the dashboard runs from this repo with Python 3.12 and main file `app/app.py`. It only reads files that are in the repo (`data/processed/`, `models/`, `app/game/`, `.streamlit/config.toml`), never the raw Kaggle file.
+**Online (Streamlit Community Cloud):** live at https://press-start.streamlit.app. The dashboard runs from this repo with Python 3.12 and main file `app/app.py`. It only reads files that are in the repo (`data/processed/`, `models/`, `app/game/`, `.streamlit/config.toml`), never the raw Kaggle file.
 
 ## Dashboard
 
-The dashboard works like a game main menu with three modes. Run `streamlit run app/app.py`; it opens on **HOME**.
+**Live demo: https://press-start.streamlit.app** (Streamlit Community Cloud)
+
+The dashboard works like a game main menu with three modes. Run `streamlit run app/app.py` locally, or open the live demo; it opens on **HOME**.
 
 **How to navigate:** the pixel bar at the top of every page has **HOME / STORY MODE / HIT LAB / ARCADE** (the current page is pressed in). On HOME, each mode card has a big button that opens it. Every page has its own address (`/`, `/story`, `/hit_lab`, `/arcade`) and the browser tab shows the page name, e.g. "Press Start | Hit Lab". Filter values and Hit Predictor ideas are kept when you switch pages.
 
@@ -174,7 +178,7 @@ The dashboard works like a game main menu with three modes. Run `streamlit run a
   - **Loved vs Seen:** popularity vs satisfaction quadrants + top Hidden Gems
   - **Hit Patterns:** historical comparison of similar Indie games (sample size, confidence interval, *Insufficient data* warning, matching hits) and "What do Indie hits have in common?"
   - **Game Explorer:** search, sort and download the data
-- **HIT LAB:** the *Hit Predictor* as a mini-game on its own page. Build an idea from pre-launch choices (incl. price band) and get a **rank** S/A/B/C/D against every 2020–2023 Indie game (S = top 5%, A = top 20%, B = top 40%, C = top 70%), "better than X% of Indie games", the calibrated hit chance, the factors that moved the score, up to 3 **power-ups** (one-step changes that raise the chance by 0.5+ points; price is never suggested because it stands for budget), **Roll the dice** (a random realistic idea from a real Indie game's profile), **Player 1 vs Player 2** comparison, and similar real hits. A **Model card** shows test ROC-AUC, CV ROC-AUC, the train/test gap, the features used, and the features excluded and why. Ends with a Key insights box.
+- **HIT LAB:** the *Hit Predictor* as a mini-game on its own page. Build an idea from pre-launch choices (incl. price band) and get a **rank** S/A/B/C/D against every 2020–2023 Indie game (S = top 5%, A = top 20%, B = top 40%, C = top 70%), "better than X% of Indie games", the calibrated hit chance, the factors that moved the score, up to 3 **power-ups** (one-step changes that raise the chance by 0.5+ points; price is never suggested because it stands for budget), **Roll the dice** (a random realistic idea from a real Indie game's profile), and similar real hits. You work on one idea at a time. A **Model card** shows test ROC-AUC, CV ROC-AUC, the train/test gap, the features used, and the features excluded and why. Ends with a Key insights box.
 - **ARCADE:** *INDIE RUN*, a playable pixel endless runner (HTML5 canvas, vanilla JavaScript, all art drawn in code), shown large (16:9, up to 1000 px wide, always fully inside its card). You play a small Indie developer. Jump over BUGs and ZERO REVIEWS gaps, slide under CRUNCH bars, and collect review stars (+10). Power-ups: MULTIPLAYER (shield), LOCALIZATION (star magnet), COZY (slow motion). Each level is a release year (2020 → 2024, then ENDLESS), and speed and obstacle density follow the real number of Indie releases that year. Power-ups show the real hit rate of the factor they are named after, and the game-over screen shows a real fact. Python passes only a small JSON of numbers from the clean data. Click the game to focus it; keys only reach the game while it has focus. Controls: Space / Up / W = jump (twice = double jump), Down / S = slide, P = pause; touch: tap = jump, swipe down = slide. Best score is kept in the browser. Below the game: "How the game uses the data" and a Key insights box.
 
 ## Limitations

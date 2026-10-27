@@ -64,9 +64,9 @@ def score(idea, scale):
     return {"p": p * 100, "pct": pct, "rank": M.rank_of(pct)}
 
 
-def rank_badge(res, label="RANK"):
+def rank_badge(res):
     color = RANK_COLORS[res["rank"]]
-    return (f"<div class='rankrow'><div><div class='rank-label'>{label}</div>"
+    return (f"<div class='rankrow'><div><div class='rank-label'>RANK</div>"
             f"<div class='rank' style='color:{color};border-color:{color}'>{res['rank']}</div>"
             f"</div><div><div class='better'>Better than {int(res['pct'])}% of Indie games</div>"
             f"<div class='chance-small'>Hit chance: {res['p']:.1f}% · "
@@ -74,7 +74,8 @@ def rank_badge(res, label="RANK"):
             f"({metrics['indie_base_rate_pct']:.1f}%)</div></div></div>")
 
 
-def single_mode(sub_opts, gen_opts, scale):
+def idea_result(sub_opts, gen_opts, scale):
+    """One game idea: inputs on the left, its rank, power-ups and score drivers on the right."""
     c1, c2 = st.columns([5, 6])
     with c1, card("idea"):
         st.markdown("#### Your idea")
@@ -125,27 +126,6 @@ def single_mode(sub_opts, gen_opts, scale):
     return res
 
 
-def compare_mode(sub_opts, gen_opts, scale):
-    c1, c2 = st.columns(2)
-    with c1, card("player1"):
-        st.markdown("#### Player 1")
-        idea1 = idea_panel("pred", sub_opts, gen_opts)
-    with c2, card("player2"):
-        st.markdown("#### Player 2")
-        idea2 = idea_panel("p2", sub_opts, gen_opts)
-    r1, r2 = score(idea1, scale), score(idea2, scale)
-    diff = r1["p"] - r2["p"]
-    verdict = "DRAW" if abs(diff) < 0.5 else "PLAYER 1 WINS" if diff > 0 else "PLAYER 2 WINS"
-    with card("versus"):
-        v1, v2, v3 = st.columns([5, 3, 5])
-        v1.markdown(rank_badge(r1, "PLAYER 1"), unsafe_allow_html=True)
-        v2.markdown(f"<div class='verdict'>{verdict}</div>"
-                    f"<div class='chance-small' style='text-align:center'>"
-                    f"{abs(diff):.1f} pts apart</div>", unsafe_allow_html=True)
-        v3.markdown(rank_badge(r2, "PLAYER 2"), unsafe_allow_html=True)
-    return r1
-
-
 def model_card():
     t = metrics["test"]
     with card("model"):
@@ -185,18 +165,15 @@ else:
     sub_opts = sorted(n.split(": ", 1)[1] for n in names if n.startswith("Sub-genre: "))
     gen_opts = sorted(n.split(": ", 1)[1] for n in names if n.startswith("Steam genre: "))
     scale = indie_score_scale(bundle, C.MODEL_FILE.stat().st_mtime)
-    st.session_state.setdefault("pred_compare", False)
-    compare = st.toggle("Compare two ideas (Player 1 vs Player 2)", key="pred_compare")
-    res = (compare_mode if compare else single_mode)(sub_opts, gen_opts, scale)
+    res = idea_result(sub_opts, gen_opts, scale)
     st.markdown(f"<p class='caveat'>Estimate based on patterns in 2020–2023 Steam games. "
                 f"Not a guarantee. Test ROC-AUC = {metrics['test']['roc_auc']:.2f} on "
                 "unseen games. Price reflects budget and scope (bigger teams, more "
                 "content, more marketing). Raising the price of the same game will not "
                 "make it a hit.</p>", unsafe_allow_html=True)
     model_card()
-    who = "Player 1's idea" if compare else "Your idea"
     key_insights("hitlab", [
-        f"{who}: rank **{res['rank']}**, better than **{int(res['pct'])}%** of Indie games, "
+        f"Your idea: rank **{res['rank']}**, better than **{int(res['pct'])}%** of Indie games, "
         f"**{res['p']:.1f}%** hit chance (**{res['p'] / metrics['indie_base_rate_pct']:.1f}×** "
         f"the Indie average of {metrics['indie_base_rate_pct']:.1f}%).",
         f"The model ranks unseen games well (test ROC-AUC **{metrics['test']['roc_auc']:.2f}**, "
