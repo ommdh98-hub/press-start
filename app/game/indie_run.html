@@ -41,6 +41,11 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   const W = 288, H = 162, GROUND = 138, PX = 40, STEP = 1 / 60;
   const GRAVITY = 1000, JUMP_V = 300, DOUBLE_V = 265;  // single jump: 45 px high, 0.6 s in the air
   const LEVEL_TIME = 15, EASY_TIME = 10, LIVES = 3, GOAL = 10000;
+  // Level intro: the game runs at 30% speed for 2.5 s under the level banner, then ramps back
+  // to full speed in 0.7 s; the player is safe the whole time. In game time that is about
+  // 1.2 s, kept free of obstacles (INTRO_CALM adds reaction time after it).
+  const INTRO_SLOW = 2.5, INTRO_RAMP = 0.7, INTRO_SCALE = 0.3;
+  const INTRO_SIM = INTRO_SLOW * INTRO_SCALE + INTRO_RAMP * (1 + INTRO_SCALE) / 2, INTRO_CALM = 0.6;
   // Tunnels: the ceiling ends 11 px above the ground. Standing (12 px tall) hits it, sliding
   // (6 px) fits. A slide hop lifts a 5 px tall body 4.5 px, so it clears a 3 px floor bug and
   // never reaches the ceiling (4.5 + 5 < 11). It rises fast (above the bug within 0.02 s, so a
@@ -56,6 +61,16 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   const YEARS = Object.keys(D.releases).sort();
   const REL = YEARS.map(y => D.releases[y]);
   const TU = YEARS.length;                       // level index of the final TUWAIQ ACADEMY level
+  // The idea of each level and the player's goal, from the real change in Indie releases
+  const LEVEL_LINES = REL.map((n, L) => {
+    if (L === 0) return ["YOUR FIRST LAUNCH YEAR. JUMP THE BUGS,", "COLLECT BUDGET AND LEARN THE ROPES."];
+    const ch = Math.round((n / REL[L - 1] - 1) * 100), d = (ch >= 0 ? "+" : "") + ch + "% RELEASES. ";
+    if (ch < 0) return [d + "A CALMER YEAR:", "SAVE BUDGET AND MASTER THE TUNNELS."];
+    if (ch < 15) return [d + "MORE GAMES FIGHT FOR PLAYERS.", "KEEP YOUR LIVES AND KEEP RUNNING."];
+    if (n === Math.max.apply(null, REL)) return [d + "THE MARKET IS PACKED.", "SURVIVE THE CROWD."];
+    return [d + "THE MARKET GETS BUSY.", "STAY SHARP: NEW HAZARDS AHEAD."];
+  });
+  LEVEL_LINES.push(["GRADUATION DAY: THE FINAL CHALLENGE.", "REACH " + GOAL.toLocaleString("en-US") + " POINTS TO GRADUATE!"]);
 
   const cv = document.getElementById("game");
   const screen = cv.getContext("2d");
@@ -128,7 +143,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     "!": "010010010000010", "?": "110001010000010", "/": "001001010100100",
     "'": "010010000000000", "(": "001010010010001", ")": "100010010010100",
     ">": "100010001010100", "<": "001010100010001", "=": "000111000111000",
-    "&": "010101010101011", "$": "011110010011110",
+    "&": "010101010101011",
   };
   GLYPHS["—"] = GLYPHS["-"];   // em dash
   GLYPHS["–"] = GLYPHS["-"];   // en dash
@@ -136,6 +151,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   // Wider or taller glyphs, rows separated by "|" (a 3x5 "%" reads as "Z", a comma as "/")
   GLYPHS["%"] = "11001|11010|00100|01011|10011";
   GLYPHS[","] = "000|000|000|000|010|100";
+  GLYPHS["$"] = "01110|10100|01110|00101|01110";   // with the vertical stroke (a 3x5 one reads as S)
   for (const ch in GLYPHS) {
     const g = GLYPHS[ch];
     GLYPHS[ch] = g.includes("|") ? g.split("|") : g.match(/.{3}/g);
@@ -278,15 +294,15 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
 
   // Power-ups: hit-related factors from the data (shown on pickup with their real hit rate)
   const POW = {
-    shield: { name: "MULTIPLAYER", effect: "SHIELD", col: PAL.teal, dur: 10,
+    shield: { name: "MULTIPLAYER", effect: "SHIELD", tag: "SHIELD", col: PAL.teal, dur: 10,
               fact: "MULTIPLAYER INDIE GAMES: " + pct(D.powerups.multiplayer) + "% HITS",
               icon: sprite(["..f...f..", ".fff.fff.", "..f...f..", ".........", ".ttt.ttt.",
                             "ttttttttt", "ttttttttt", ".........", "........."]) },
-    magnet: { name: "LOCALIZATION", effect: "STAR MAGNET", col: PAL.blue, dur: 8,
+    magnet: { name: "LOCALIZATION", effect: "STAR MAGNET", tag: "MAGNET", col: PAL.blue, dur: 8,
               fact: "INDIE GAMES IN 10+ LANGUAGES: " + pct(D.powerups.languages_10plus) + "% HITS",
               icon: sprite([".........", ".bbbbbbb.", "bbbbbbbbb", "bb.....bb", "bb.....bb",
                             "bb.....bb", "ff.....ff", "ff.....ff", "........."]) },
-    cozy:   { name: "COZY", effect: "SLOW MOTION", col: PAL.purple, dur: 5,
+    cozy:   { name: "COZY", effect: "SLOW MOTION", tag: "COZY", col: PAL.purple, dur: 5,
               fact: "COZY INDIE GAMES: " + pct(D.powerups.cozy) + "% HITS",
               icon: sprite(["..m.m....", "...m.m...", "..m.m....", ".........", "pppppp...",
                             "pppppppp.", "pppppp.p.", "pppppppp.", ".pppp...."]) },
@@ -666,6 +682,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     },
     over: a => { notes(a, [392, 330, 262, 196], 0.14, "square", 0.11); tone(a, 0.56, 98, 65, 0.4, "triangle", 0.25); },
     blip: a => tone(a, 0, 660, 660, 0.05, "square", 0.07),
+    deny: a => tone(a, 0, 160, 120, 0.12, "square", 0.08),
     star: a => { tone(a, 0, 1320, 1320, 0.035, "square", 0.045); tone(a, 0.035, 1760, 1760, 0.06, "square", 0.045); },
   };
   let sfxPlayed = 0;
@@ -699,16 +716,19 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   const gapTimeFor = L => { const b = busyness(L); return 1.9 / Math.pow(b.ratio, 0.9) / b.extra; };
   // 0.92 points per pixel: with about half of the stars collected, 10,000 comes ~10 s into
   // the Tuwaiq level (more stars: earlier, fewer: later; never before that level)
-  const DIST_PTS = 0.92;
-  const score = () => Math.floor(g.dist * DIST_PTS) + g.stars * 10;
+  const DIST_PTS = 0.92, STAR_PTS = 10;
+  const score = () => Math.floor(g.points);
+  const scoreMult = () => (g.mktL === g.L ? 2 : 1);   // MARKETING: x2 score for one level
   const levelAt = t => Math.min(TU, Math.floor(t / LEVEL_TIME));
 
   function reset() {
-    g = { dist: 0, simT: 0, L: 0, levelT: 0, speed: speedFor(0), stars: 0, lives: LIVES,
+    g = { dist: 0, simT: 0, L: 0, levelT: 0, speed: speedFor(0), stars: 0, lives: LIVES, points: 0,
+          spent: 0, hearts: LIVES, shieldN: 0, magnetL: -1, mktL: -1, cozyNext: 0, bought: [],
+          shopNow: false,
           obs: [], items: [], parts: [], floats: [], nextX: W + 30, nextPowerT: 12,
           lastEnd: 0, segStart: W + 30,
           shield: 0, magnet: 0, cozy: 0, invuln: 0, shake: 0, deadT: 0,
-          banner: { L: 0, t: 2.2 }, toast: null, fade: 0, fromL: 0,
+          intro: { L: 0, t: 0 }, banner: null, toast: null, fade: 0, fromL: 0,
           tunnels: {}, spikes: {}, rowN: 0, rowI: 0, goalDone: false, endless: false, endlessT: 0, finished: false,
           hits: 0, pits: 0, tunnelsPassed: 0, hopsCleared: 0 };
     p = { y: GROUND, vy: 0, onGround: true, jumps: 2, coyote: 0, buffer: 0, slideMin: 0,
@@ -755,6 +775,31 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     if (L >= 3 && Math.random() < 0.35) return 2;          // long double-bug tunnels from 2023
     return Math.random() < 0.6 ? 1 : 0;
   }
+  // When will the player reach world x? The same speed easing as advanceWorld(), run ahead
+  function predictArrive(x) {
+    let t = g.simT, d = g.dist, v = g.speed, L = g.L, lt = g.levelT;
+    while (d + PX < x && t < g.simT + 30) {
+      t += STEP; lt += STEP;
+      if (L < TU && lt >= LEVEL_TIME) { lt -= LEVEL_TIME; L++; }
+      v += (speedFor(L) - v) * Math.min(1, STEP * 1.2);
+      d += v * STEP;
+    }
+    return t;
+  }
+  // No obstacle reaches the player in the level intro (slow motion, banner up) or in the
+  // 0.5 s before a level starts: an obstacle that would is moved to just after the intro
+  function calmX(x, w) {
+    // (times for the player's front edge, 14 px ahead of PX)
+    const t0 = predictArrive(x - 14), t1 = predictArrive(x + w + 12);
+    for (let L = 1; L <= TU; L++) {
+      const a = L * LEVEL_TIME - 0.5, b = L * LEVEL_TIME + INTRO_SIM + INTRO_CALM;
+      if (t1 < a || t0 > b) continue;
+      let nx = x;                                  // move it forward until it arrives after b
+      while (predictArrive(nx - 14) < b) nx += 8;
+      return nx;
+    }
+    return x;
+  }
   // Everything is created beyond the right edge. The stars and power-ups of a free run are
   // only known once the obstacle that ends it is placed, so the next obstacle is placed while
   // the free run in front of it still starts off screen (spawning used to wait for the
@@ -763,27 +808,39 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   function spawnAhead() {
     if (g.segStart >= g.dist + SPAWN_X) return;
     while (g.segStart < g.dist + SPAWN_X) {
-      const arriveT = g.simT + (g.nextX - g.dist - PX) / g.speed;
+      const arriveT = predictArrive(g.nextX);
       const L = levelAt(arriveT);
       const easy = arriveT < EASY_TIME;           // the first 10 seconds: bugs only, wide gaps
       // Margins use the fastest speed this obstacle can meet: the next level (or the endless
       // ramp) may already have started when the player gets there
-      const spd = 1.05 * Math.max(g.speed, speedFor(L), speedFor(levelAt(arriveT + 3)));
+      let spd = 1.05 * Math.max(g.speed, speedFor(L), speedFor(levelAt(arriveT + 3)));
       const type = pickType(L, easy);
-      const x = type === "tunnel" ? Math.max(g.nextX, g.lastEnd + TUN_BEFORE * spd + ARC) : g.nextX;
-      // Stars and power-ups go in the free run since the last obstacle, outside safe zones
-      fillSegment(g.segStart, type === "tunnel" ? x - TUN_BEFORE * spd : x, arriveT);
       // A gap is never wider than a single jump can clear with time to spare
       const w = type === "bug" ? 11
         : type === "gap" ? Math.round(rand(22, Math.max(24, Math.min(58, 0.38 * g.speed))))
         : type === "crunch" ? Math.round(rand(28, 40))
         : 0;
-      const o = { type: type, x: x, w: w, dead: false, spikes: [] };
+      const o = { type: type, x: 0, w: w, dead: false, spikes: [] };
+      let n = 0;
+      const tunnelW = () => Math.round(spd * (n === 2 ? rand(2.3, 2.7) : n === 1 ? rand(1.4, 1.9) : rand(0.8, 1.5)));
       if (type === "tunnel") {
-        const n = tunnelBugs(L);
-        o.w = Math.round(spd * (n === 2 ? rand(2.3, 2.7) : n === 1 ? rand(1.4, 1.9) : rand(0.8, 1.5)));
+        n = tunnelBugs(L);
+        o.w = tunnelW();
         g.tunnels[L] = true;
         if (n) g.spikes[L] = true;
+      }
+      const x0 = type === "tunnel" ? Math.max(g.nextX, g.lastEnd + TUN_BEFORE * spd + ARC) : g.nextX;
+      o.x = calmX(x0, o.w);
+      if (o.x !== x0) {
+        // Moved past a level intro: it now meets the next level's speed, so it is sized again
+        // for that speed (its margins were measured for the old one)
+        const t2 = predictArrive(o.x);
+        spd = Math.max(spd, 1.05 * Math.max(speedFor(levelAt(t2)), speedFor(levelAt(t2 + 3))));
+        if (type === "tunnel") { o.w = tunnelW(); o.x = calmX(o.x, o.w); }
+      }
+      // Stars and power-ups go in the free run since the last obstacle, outside safe zones
+      fillSegment(g.segStart, type === "tunnel" ? o.x - TUN_BEFORE * spd : o.x, arriveT);
+      if (type === "tunnel") {
         const a = o.x + BUG_IN * spd, b = o.x + o.w - BUG_OUT * spd - SPIKE_W;   // allowed range
         if (n === 1) o.spikes.push(rand(a, b));
         if (n === 2) {
@@ -900,9 +957,9 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   }
   function fallInPit() {
     g.pits++;
-    if (g.invuln > 0) { bounceUp(); return; }
-    if (g.shield > 0) {             // MULTIPLAYER shield: a teammate throws you back up
-      g.shield = 0; g.invuln = 1;
+    if (g.invuln > 0 || introSafe()) { bounceUp(); return; }
+    if (useShield()) {              // MULTIPLAYER shield: a teammate throws you back up
+      g.invuln = 1;
       bounceUp();
       burst(PX + 5, GROUND, PAL.teal, 14);
       floatText("SAVED!", PX - 4, GROUND - 24, PAL.teal);
@@ -968,7 +1025,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     const pcx = g.dist + b.x + b.w / 2, pcy = b.y + b.h / 2;
     for (const it of g.items) {
       if (it.taken) continue;
-      if (it.kind === "star" && g.magnet > 0) {          // LOCALIZATION magnet
+      if (it.kind === "star" && (g.magnet > 0 || g.magnetL === g.L)) {   // LOCALIZATION magnet
         const dx = pcx - (it.x + 2), dy = pcy - (it.y + 2), d = Math.hypot(dx, dy);
         if (d < 80 && d > 0.5) { const s = Math.min(d, 230 * dt); it.x += dx / d * s; it.y += dy / d * s; }
       }
@@ -978,9 +1035,10 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       const sx = it.x - g.dist + size / 2, sy = it.y + size / 2;
       if (it.kind === "star") {
         g.stars++;
+        g.points += STAR_PTS * scoreMult();
         pop(sx, sy, PAL.yellow);
         burst(sx, sy, PAL.yellow, 8, 70);
-        floatText("+10", sx - 5, sy - 8, PAL.yellow);
+        floatText("+$" + STAR_CASH, sx - 7, sy - 8, PAL.yellow);
         sfx("star");
       } else {
         const P = POW[it.p];
@@ -1002,11 +1060,17 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     shake(5);
     return true;
   }
+  // A MULTIPLAYER shield blocks one hit: the pickup (timed) first, then a shop charge
+  function useShield() {
+    if (g.shield > 0) { g.shield = 0; return true; }
+    if (g.shieldN > 0) { g.shieldN--; return true; }
+    return false;
+  }
   function hit(o) {
-    if (g.invuln > 0) return;
+    if (g.invuln > 0 || introSafe()) return;
     const ceiling = o.type === "tunnel" || o.type === "crunch";
-    if (g.shield > 0) {
-      g.shield = 0; g.invuln = 1;
+    if (useShield()) {
+      g.invuln = 1;
       if (!ceiling) o.dead = true;
       burst(o.x - g.dist + Math.min(o.w, 11) / 2, GROUND - 6, PAL.teal, 16);
       floatText("BLOCKED!", PX - 8, GROUND - 26, PAL.teal);
@@ -1101,36 +1165,124 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     compact(g.floats, showing);
   }
 
-  // Time, level, speed, distance and spawning: everything that does not depend on the player
+  // Slow motion under the level banner (no slow-down with reduced motion: banner only)
+  function timeScale() {
+    if (!g.intro || REDUCED) return 1;
+    const t = g.intro.t;
+    if (t < INTRO_SLOW) return INTRO_SCALE;
+    const f = Math.min(1, (t - INTRO_SLOW) / INTRO_RAMP);
+    return INTRO_SCALE + (1 - INTRO_SCALE) * f * f * (3 - 2 * f);   // smooth ramp back up
+  }
+  const introSafe = () => !!g.intro;
+  // ---------------------------------------------------------------- shop (between levels)
+  // Stars are budget. Between two levels the game stops and the player may buy one item, a
+  // stronger version of a power-up, or skip; with no input the shop closes by itself.
+  const STAR_CASH = 10, MAX_LIVES = 4, MAX_SHIELD = 4;
+  const SHOP_TIME = 8, SHOP_LOCK = 0.5;            // auto skip / keys still mashed from playing
+  const MEGAPHONE = sprite(["......oo.", "....oooo.", "ffoooooo.", "ffoooooof", "ffoooooo.",
+                            "....oooo.", "......oo.", ".ff......", ".ff......"]);
+  const SHOP = [
+    { id: "cozy", name: "COZY", price: 150, col: PAL.purple, icon: POW.cozy.icon,
+      effect: "SLOWER GAME FOR 10 SECONDS",
+      why: "COZY IS THE TOP INDIE SUB-GENRE: " + pct(D.powerups.cozy) + "% HITS" },
+    { id: "magnet", name: "LOCALIZATION", price: 250, col: PAL.blue, icon: POW.magnet.icon,
+      effect: "STAR MAGNET FOR THE WHOLE NEXT LEVEL",
+      why: "10+ LANGUAGES: " + pct(D.powerups.languages_10plus) + "% HITS VS " + pct(D.powerups.one_language) + "% WITH ONE" },
+    { id: "shield", name: "MULTIPLAYER", price: 300, col: PAL.teal, icon: POW.shield.icon,
+      effect: "SHIELD THAT BLOCKS THE NEXT 2 HITS",
+      why: "MULTIPLAYER: " + pct(D.powerups.multiplayer) + "% HITS VS " + pct(D.powerups.single_player) + "% SINGLE-PLAYER" },
+    { id: "life", name: "EXTRA LIFE", price: 350, col: PAL.red, icon: HEART,
+      effect: "+1 HEART (MAX " + MAX_LIVES + ")",
+      why: "ONLY " + pct(D.indie_hit_rate) + "% OF INDIE GAMES BECOME HITS: A SECOND TRY COUNTS" },
+    { id: "mkt", name: "MARKETING", price: 400, col: PAL.orange, icon: MEGAPHONE,
+      effect: "X2 SCORE FOR THE WHOLE NEXT LEVEL",
+      why: pct(D.few_reviews_pct) + "% OF GAMES GET UNDER 10 REVIEWS: GET SEEN" },
+  ];
+  const SKIP = SHOP.length;                        // the selection index of the SKIP button
+  let shop = null;
+  const budget = () => g.stars * STAR_CASH - g.spent;
+  function shopLock(it) {                          // why an item cannot be bought, or ""
+    if (it.id === "life" && g.lives >= MAX_LIVES) return "MAX";
+    if (it.id === "shield" && g.shieldN + 2 > MAX_SHIELD) return "MAX";
+    return budget() < it.price ? "LOCKED" : "";
+  }
+  function openShop() {
+    const can = SHOP.findIndex(it => !shopLock(it));
+    shop = { t: 0, sel: can >= 0 ? can : SKIP, time: can >= 0 ? SHOP_TIME : 3 };
+    state = "shop"; stateT = 0;
+    clearInput();
+    sfx("blip");
+  }
+  function closeShop() { shop = null; state = "play"; stateT = 0; }
+  function updateShop(rdt) {
+    // the timer waits while the game is not focused (a player who looks away is not skipped)
+    if (document.hasFocus && !document.hasFocus()) return;
+    if ((shop.t += rdt) >= shop.time) { sfx("blip"); closeShop(); }
+  }
+  function moveShop(d) { shop.sel = (shop.sel + d + SKIP + 1) % (SKIP + 1); sfx("blip"); }
+  function chooseShop(i) {
+    if (state !== "shop" || shop.t < SHOP_LOCK) return;
+    if (i === SKIP) { sfx("blip"); closeShop(); return; }
+    const it = SHOP[i];
+    if (shopLock(it)) { shop.sel = i; sfx("deny"); return; }
+    g.spent += it.price;
+    g.bought.push(it.id);
+    if (it.id === "cozy") g.cozyNext = 10;
+    else if (it.id === "magnet") g.magnetL = g.L;
+    else if (it.id === "shield") g.shieldN += 2;
+    else if (it.id === "life") { g.lives++; g.hearts = Math.max(g.hearts, g.lives); }
+    else if (it.id === "mkt") g.mktL = g.L;
+    g.toast = { title: it.name + ": " + it.effect, fact: it.why, col: it.col, t: 3.2 };
+    sfx("power");
+    closeShop();
+  }
+
+  // One fixed step of everything that does not depend on the player (the fairness check runs
+  // exactly this): intro and COZY slow motion, timers, then time, level, speed, distance and
+  // spawning. Returns the game-time step for the player.
+  function stepWorld(rdt) {
+    if (g.intro && (g.intro.t += rdt) >= INTRO_SLOW + INTRO_RAMP) {
+      g.intro = null;
+      if (g.cozyNext) { g.cozy = Math.max(g.cozy, g.cozyNext); g.cozyNext = 0; }   // shop COZY
+    }
+    const dt = rdt * timeScale() * (g.cozy > 0 ? 0.6 : 1);   // COZY slows the whole game
+    for (const k of TIMERS) g[k] = Math.max(0, g[k] - rdt);
+    advanceWorld(dt);
+    return dt;
+  }
+  // Time, level, speed, distance and spawning
   function advanceWorld(dt) {
     g.simT += dt; g.levelT += dt;
     if (g.endless) g.endlessT += dt;
     if (g.L < TU && g.levelT >= LEVEL_TIME) {
       g.levelT -= LEVEL_TIME; g.fromL = g.L; g.L++; g.fade = 0.6;
-      g.banner = { L: g.L, t: g.L === TU ? 2.6 : 2.2 };
+      g.intro = { L: g.L, t: 0 };
+      g.shopNow = true;                            // the shop opens before the intro plays
       sfx("level");
     }
     g.speed += (speedFor(g.L) - g.speed) * Math.min(1, dt * 1.2);
     g.dist += g.speed * dt;
+    g.points += g.speed * dt * DIST_PTS * scoreMult();
     spawnAhead();
   }
   function update(rdt) {
     stateT += rdt;
     if (state === "title") { titleScroll += 40 * rdt; return; }
+    if (state === "shop") { updateShop(rdt); return; }
     if (state === "paused" || state === "over" || state === "goal") return;
-    const dt = rdt * (g.cozy > 0 ? 0.6 : 1);        // COZY slows the whole game
-    for (const k of TIMERS) g[k] = Math.max(0, g[k] - rdt);
     if (g.banner && (g.banner.t -= rdt) <= 0) g.banner = null;
     if (g.toast && (g.toast.t -= rdt) <= 0) g.toast = null;
     g.fade = Math.max(0, g.fade - rdt);
     g.shake = Math.max(0, g.shake - rdt * 30);
-    updateParticles(dt);
     if (state === "dying") {
+      updateParticles(rdt);
       p.vy += GRAVITY * rdt; p.y += p.vy * rdt;
       if ((g.deadT -= rdt) <= 0) gameOver(false);
       return;
     }
-    advanceWorld(dt);
+    const dt = stepWorld(rdt);
+    updateParticles(dt);
+    if (g.shopNow) { g.shopNow = false; openShop(); return; }
     p.prevY = p.y;
     updatePlayer(dt);
     if (state !== "play") return;
@@ -1140,8 +1292,8 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     countPassed();
     compact(g.obs, keepObs);
     compact(g.items, keepItem);
-    // The 10,000 goal can only be reached on the final level, after its banner
-    if (!g.goalDone && g.L >= TU && g.levelT > 2.6 && score() >= GOAL) reachGoal();
+    // The 10,000 goal can only be reached on the final level, after its intro
+    if (!g.goalDone && g.L >= TU && !g.intro && score() >= GOAL) reachGoal();
   }
 
   // ---------------------------------------------------------------- render
@@ -1301,7 +1453,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     else if (!p.onGround || state === "dying") ctx.drawImage(JUMP, PX - 1, y - 14);
     else ctx.drawImage(RUN[[0, 1, 2, 1][Math.floor(p.anim) % 4]], PX - 1, y - 14);
     ctx.globalAlpha = 1;
-    if (g.shield > 0 && (g.shield > 2 || Math.floor(clock * 8) % 2)) {
+    if ((g.shield > 0 && (g.shield > 2 || Math.floor(clock * 8) % 2)) || g.shieldN > 0) {
       const b = playerBox(), x0 = b.x - 4, y0 = b.y - 4, w = b.w + 8, hh = b.h + 6;
       ctx.fillStyle = PAL.teal;
       ctx.fillRect(x0 + 2, y0, w - 4, 1); ctx.fillRect(x0 + 2, y0 + hh, w - 4, 1);
@@ -1341,19 +1493,21 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       text("CHASE YOUR HIGH SCORE", W / 2, y0 + 22, PAL.text, 1, "center");
       return null;
     }
+    const lines = LEVEL_LINES[Math.min(B.L, TU)];
     if (B.L >= TU) {                               // the final level: name + logo
-      const w = 204, x0 = (W - w) / 2, y0 = 16;
-      frameBox(x0, y0, w, 78, T.accent, "rgba(11, 13, 31, 0.9)");
+      const w = 236, x0 = (W - w) / 2, y0 = 14;
+      frameBox(x0, y0, w, 94, T.accent, "rgba(11, 13, 31, 0.9)");
       text("FINAL LEVEL", W / 2, y0 + 5, PAL.muted, 1, "center");
       shadowText("TUWAIQ ACADEMY", W / 2, y0 + 13, T.accent, 3, "center");
-      text("REACH " + fmtInt(GOAL) + " POINTS!", W / 2, y0 + 68, PAL.yellow, 1, "center");
+      lines.forEach((l, i) => text(l, W / 2, y0 + 68 + i * 8, i ? PAL.yellow : PAL.text, 1, "center"));
       return { x: W / 2 - 60, y: y0 + 34, w: 120, h: 28 };
     }
-    const w = 186, x0 = (W - w) / 2, y0 = 22;
-    frameBox(x0, y0, w, 52, T.accent, "rgba(11, 13, 31, 0.88)");
+    const w = 240, x0 = (W - w) / 2, y0 = 18;
+    frameBox(x0, y0, w, 56 + lines.length * 8, T.accent, "rgba(11, 13, 31, 0.88)");
     text("LEVEL " + (B.L + 1) + " OF " + (TU + 1) + ": " + T.name, W / 2, y0 + 5, PAL.muted, 1, "center");
     shadowText(YEARS[B.L], W / 2, y0 + 13, T.accent, 4, "center");
-    shadowText(fmtInt(REL[B.L]) + " INDIE RELEASES", W / 2, y0 + 37, PAL.yellow, 2, "center");
+    shadowText(fmtInt(REL[B.L]) + " INDIE GAMES", W / 2, y0 + 37, PAL.yellow, 2, "center");
+    lines.forEach((l, i) => text(l, W / 2, y0 + 53 + i * 8, PAL.text, 1, "center"));
     return null;
   }
   function drawHUD() {
@@ -1363,25 +1517,33 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     shadowText("SCORE " + pad(s), 4, 3, PAL.text, 1, "left", true);
     shadowText(g.L < TU ? "YEAR " + YEARS[g.L] : levelName(g.L), W / 2, 3, themeOf(g.L).accent, 1, "center");
     shadowText("BEST " + pad(Math.max(best, s)), W - 4, 3, PAL.text, 1, "right", true);
-    let x = 4;
+    // second row: the budget, then what is active (timed power-ups as bars, shop items as tags)
+    const cash = "BUDGET $" + budget();
+    shadowText(cash, 4, 14, PAL.yellow, 1, "left", true);
+    let x = 4 + textW(cash) + 6;
     for (const k of POW_KEYS) {
       if (g[k] <= 0) continue;
       const P = POW[k];
-      shadowText(P.name, x, 14, P.col);
-      x += textW(P.name) + 3;
-      ctx.fillStyle = PAL.ink; ctx.fillRect(x, 14, 26, 5);
-      ctx.fillStyle = P.col; ctx.fillRect(x + 1, 15, Math.ceil(24 * g[k] / P.dur), 3);
-      x += 32;
+      shadowText(P.tag, x, 14, P.col);
+      x += textW(P.tag) + 2;
+      ctx.fillStyle = PAL.ink; ctx.fillRect(x, 14, 22, 5);
+      ctx.fillStyle = P.col; ctx.fillRect(x + 1, 15, Math.ceil(20 * Math.min(1, g[k] / P.dur)), 3);
+      x += 26;
     }
-    for (let i = 0; i < LIVES; i++) {              // lives as pixel hearts, top right
-      const hx = W - 4 - (LIVES - i) * 9;
+    const tag = (str, col) => { shadowText(str, x, 14, col); x += textW(str) + 5; };
+    if (g.shieldN > 0) tag("SHIELD X" + g.shieldN, PAL.teal);
+    if (g.magnetL === g.L) tag("MAGNET", PAL.blue);
+    if (g.mktL === g.L) tag("SCORE X2", PAL.orange);
+    for (let i = 0; i < g.hearts; i++) {           // lives as pixel hearts, top right
+      const hx = W - 4 - (g.hearts - i) * 9;
       ctx.fillStyle = PAL.ink; ctx.fillRect(hx - 1, 13, 9, 8);
       ctx.drawImage(i < g.lives ? HEART : HEART_EMPTY, hx, 14);
     }
-    if (g.banner && state === "play") logo = drawBanner(g.banner);
+    const B = g.intro || g.banner;
+    if (B && state === "play") logo = drawBanner(B);
     if (g.toast) {
       const t = g.toast, w = Math.max(textW(t.title), textW(t.fact)) + 12;
-      const x0 = Math.floor((W - w) / 2), y0 = g.banner ? 98 : 44;
+      const x0 = Math.floor((W - w) / 2), y0 = B ? 112 : 44;
       ctx.fillStyle = PAL.ink; ctx.fillRect(x0, y0, w, 20);
       ctx.fillStyle = t.col; ctx.fillRect(x0, y0, w, 1); ctx.fillRect(x0, y0 + 19, w, 1);
       text(t.title, W / 2, y0 + 4, t.col, 1, "center");
@@ -1394,6 +1556,40 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     }
     drawMute();
     return logo;
+  }
+  const CARD_W = 54, CARD_H = 50, CARD_Y = 36;
+  const SHOP_BOX = i => ({ x: 5 + i * (CARD_W + 2), y: CARD_Y, w: CARD_W, h: CARD_H });
+  const SKIP_BTN = { x: W / 2 - 30, y: 113, w: 60, h: 13 };
+  function drawShop() {
+    dim(0.84);
+    shadowText("INDIE SHOP", W / 2, 4, PAL.yellow, 2, "center");
+    text("BUY ONE ITEM FOR THE NEXT LEVEL: " + levelName(g.L), W / 2, 18, PAL.muted, 1, "center");
+    shadowText("BUDGET $" + budget(), W / 2, 26, PAL.yellow, 1, "center", true);
+    SHOP.forEach((it, i) => {
+      const b = SHOP_BOX(i), lock = shopLock(it), on = shop.sel === i, cx = b.x + CARD_W / 2;
+      frameBox(b.x, b.y, b.w, b.h, on ? PAL.yellow : lock ? PAL.grid : it.col, on ? PAL.panel : PAL.ink);
+      ctx.globalAlpha = lock ? 0.35 : 1;
+      const iw = it.icon.width * 2, ih = it.icon.height * 2;
+      ctx.drawImage(it.icon, Math.round(cx - iw / 2), b.y + 4 + Math.round((18 - ih) / 2), iw, ih);
+      text(it.name, cx, b.y + 25, PAL.text, 1, "center");
+      shadowText("$" + it.price, cx, b.y + 33, PAL.yellow, 1, "center");
+      ctx.globalAlpha = 1;
+      text(lock || "KEY " + (i + 1), cx, b.y + 42, lock ? PAL.orange : PAL.muted, 1, "center");
+    });
+    const it = SHOP[shop.sel];
+    if (it) {
+      text(it.effect, W / 2, 92, it.col === PAL.purple ? PAL.purple : it.col, 1, "center");
+      text(it.why, W / 2, 101, PAL.text, 1, "center");
+    } else {
+      text("SKIP: KEEP YOUR BUDGET FOR A LATER SHOP", W / 2, 92, PAL.muted, 1, "center");
+      if (!SHOP.some(x => !shopLock(x))) text("NOT ENOUGH BUDGET YET. COLLECT MORE STARS!", W / 2, 101, PAL.text, 1, "center");
+    }
+    const b = SKIP_BTN, on = shop.sel === SKIP;
+    frameBox(b.x, b.y, b.w, b.h, on ? PAL.yellow : PAL.muted, on ? PAL.panel : PAL.ink);
+    text((on ? "> " : "") + "SKIP", b.x + b.w / 2, b.y + 4, on ? PAL.yellow : PAL.text, 1, "center");
+    text("AUTO SKIP IN " + Math.max(1, Math.ceil(shop.time - shop.t)), W / 2, 131, PAL.muted, 1, "center", true);
+    text("ARROWS + ENTER, KEYS 1-5 TO BUY, X TO SKIP, OR TAP", W / 2, 142, PAL.muted, 1, "center");
+    drawMute();
   }
   function dim(a) { ctx.fillStyle = "rgba(11, 13, 31, " + a + ")"; ctx.fillRect(0, 0, W, H); }
   const blink = () => Math.floor(clock * 2.5) % 2 === 0;
@@ -1409,8 +1605,9 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     text("DOWN / S: HOLD TO SLIDE (JUMP WHILE SLIDING IN A TUNNEL = HOP)", W / 2, 85, PAL.muted, 1, "center");
     text("P: PAUSE     M: SOUND ON / OFF", W / 2, 93, PAL.muted, 1, "center");
     text("TOUCH: TAP = JUMP, HOLD SLIDE BUTTON OR SWIPE DOWN = SLIDE", W / 2, 101, PAL.muted, 1, "center");
-    shadowText("3 LIVES. REACH " + fmtInt(GOAL) + " POINTS!", W / 2, 113, PAL.teal, 1, "center");
-    if (best > 0) shadowText("BEST " + pad(best), W / 2, 123, PAL.text, 1, "center");
+    text("STARS ARE BUDGET $: SPEND IT IN THE SHOP BETWEEN YEARS", W / 2, 109, PAL.muted, 1, "center");
+    shadowText("3 LIVES. REACH " + fmtInt(GOAL) + " POINTS!", W / 2, 120, PAL.teal, 1, "center");
+    if (best > 0) shadowText("BEST " + pad(best), W / 2, 130, PAL.text, 1, "center");
     drawMute();
   }
   function drawPaused() {
@@ -1443,7 +1640,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     else shadowText("GAME OVER", W / 2, 12, PAL.orange, 4, "center");
     shadowText((g.finished ? "FINAL SCORE " : "SCORE ") + score(), W / 2, 40, PAL.text, 2, "center");
     text("BEST " + best + (newBest ? "   NEW BEST!" : ""), W / 2, 56, newBest && blink() ? PAL.yellow : PAL.muted, 1, "center");
-    text("REACHED: " + levelName(g.L) + "     STARS: " + g.stars, W / 2, 64, PAL.muted, 1, "center");
+    text("REACHED: " + levelName(g.L) + "     BUDGET EARNED: $" + g.stars * STAR_CASH, W / 2, 64, PAL.muted, 1, "center");
     const lines = wrap(fact, 60), bh = lines.length * 8 + 16, y0 = 76;
     const bw = Math.max.apply(null, lines.map(l => textW(l))) + 16, x0 = Math.floor((W - bw) / 2);
     frameBox(x0, y0, bw, bh, PAL.yellow, PAL.panel);
@@ -1472,6 +1669,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     else {
       logo = drawHUD();
       if (state === "paused") drawPaused();
+      if (state === "shop") drawShop();
       if (state === "goal") logo = drawGoal();
       if (state === "over") drawOver();
     }
@@ -1514,6 +1712,14 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     if (c === "KeyM") { toggleMute(); return; }
     if (state === "title" || state === "over") { if (isJump || c === "Enter") tapAction(); return; }
     if (state === "paused") { if (c === "KeyP" || isJump) resume(); return; }
+    if (state === "shop") {
+      if (c === "ArrowLeft" || c === "KeyA" || c === "ArrowUp" || c === "KeyW") moveShop(-1);
+      else if (c === "ArrowRight" || c === "KeyD" || c === "ArrowDown" || c === "KeyS") moveShop(1);
+      else if (c === "Enter" || c === "Space") chooseShop(shop.sel);
+      else if (/^(Digit|Numpad)[1-5]$/.test(c)) chooseShop(+c.slice(-1) - 1);
+      else if (c === "KeyX" || c === "Escape") chooseShop(SKIP);
+      return;
+    }
     if (state === "goal") {
       if (c === "ArrowLeft" || c === "KeyA" || c === "ArrowUp") { if (goalSel !== 0) sfx("blip"); goalSel = 0; }
       else if (c === "ArrowRight" || c === "KeyD" || c === "ArrowDown") { if (goalSel !== 1) sfx("blip"); goalSel = 1; }
@@ -1546,6 +1752,11 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   // Clicks and taps on the mute icon and the goal buttons; returns true when handled
   function pressUI(q) {
     if (inBox(q, MUTE_BOX)) { toggleMute(); return true; }
+    if (state === "shop") {
+      SHOP.forEach((it, i) => { if (inBox(q, SHOP_BOX(i))) chooseShop(i); });
+      if (inBox(q, SKIP_BTN)) chooseShop(SKIP);
+      return true;
+    }
     if (state === "goal") {
       GOAL_BTNS.forEach((b, i) => { if (inBox(q, b)) { goalSel = i; chooseGoal(i); } });
       return true;
@@ -1634,12 +1845,12 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   // test defines window.INDIE_RUN_LAB before the game loads; the dashboard never does.
   if (window.INDIE_RUN_LAB) {
     Object.defineProperties(window.INDIE_RUN_LAB, Object.getOwnPropertyDescriptors({
-      consts: { STEP, GROUND, PX, TU, LEVEL_TIME, CEIL, SPIKE_W, W },
+      consts: { STEP, GROUND, PX, TU, LEVEL_TIME, CEIL, SPIKE_W, W, INTRO_SIM, INTRO_CALM },
       start() { reset(); state = "play"; },
       get g() { return g; },
       get p() { return p; },
       set p(v) { p = v; },
-      input, speedFor, advanceWorld, updatePlayer, firstHit, sliding,
+      input, speedFor, advanceWorld, stepWorld, updatePlayer, firstHit, sliding,
     }));
   }
 
@@ -1657,7 +1868,17 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     get muted() { return muted; },
     get audioState() { return actx ? actx.state : "none"; },
     get sfxPlayed() { return sfxPlayed; },
-    get banner() { return g && g.banner ? (g.banner.endless ? "ENDLESS" : levelName(g.banner.L)) : null; },
+    get banner() { return g && g.intro ? levelName(g.intro.L) : g && g.banner ? "ENDLESS" : null; },
+    get timeScale() { return g ? timeScale() : 1; },
+    get budget() { return g ? budget() : 0; },
+    get shop() {
+      return shop ? { sel: shop.sel, t: shop.t, time: shop.time, next: levelName(g.L),
+                      items: SHOP.map(it => ({ id: it.id, price: it.price, lock: shopLock(it) })) } : null;
+    },
+    get owned() {
+      return g ? { shieldN: g.shieldN, magnet: g.magnetL === g.L, scoreX2: g.mktL === g.L,
+                   cozy: +g.cozy.toFixed(2), cozyNext: g.cozyNext, bought: g.bought.slice(), hearts: g.hearts } : null;
+    },
     get logoVisible() { return logoVisible; },
     get player() {
       return p ? { y: p.y, onGround: p.onGround, sliding: g ? sliding() : false, hop: p.hop } : null;

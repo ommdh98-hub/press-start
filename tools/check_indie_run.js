@@ -1,10 +1,14 @@
 // Fairness check for INDIE RUN (app/game/indie_run.html). Plain Node, no packages:
 //   node tools/check_indie_run.js [seeds=500] [firstSeed=1] [--jobs=8] [--game=path/to/indie_run.html]
-// For every seed it runs the game's own generator through all year levels, the Tuwaiq level
-// and endless mode (at top speed, plus some seeds with the normal speed ramp), then searches
+// For every seed it runs the game's own world step (level intros in slow motion included)
+// through all year levels, the Tuwaiq level and endless mode (at top speed, plus some seeds
+// with the normal speed ramp, some with COZY bought in every shop and some with reduced
+// motion, where intros do not slow down), then searches
 // every input sequence (slide held or not, jump / slide hop pressed or not, decided every
-// 2 frames; in the air slide can be pressed but not released) through the game's own physics and collision code. A course is impossible when
-// no sequence survives. No power-ups are used, so the shield never helps.
+// 2 frames; in the air slide can be pressed but not released) through the game's own physics
+// and collision code. A course is impossible when no sequence survives. No shield, extra life
+// or intro safety is used, so they never help. The shop only pauses the game (the world is
+// frozen) or changes the speed of time (COZY), which the "cozy" courses cover.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -40,12 +44,12 @@ function fakeEl() {
            getBoundingClientRect: () => ({ left: 0, top: 0, width: 870, height: 492 }),
            querySelector: () => fakeEl() };
 }
-function loadGame(random) {
+function loadGame(random, reduced) {
   const M = Object.create(Math);
   M.random = random;
   const win = {
     INDIE_RUN_LAB: {}, Math: M, innerWidth: 1010, innerHeight: 572, console,
-    addEventListener() {}, matchMedia: () => ({ matches: false }), requestAnimationFrame() {},
+    addEventListener() {}, matchMedia: () => ({ matches: !!reduced }), requestAnimationFrame() {},
     performance: { now: () => 0 }, localStorage: { getItem: () => null, setItem() {} },
     document: { getElementById: fakeEl, createElement: fakeEl, addEventListener() {}, hidden: false },
   };
@@ -56,17 +60,21 @@ function loadGame(random) {
 }
 
 // 1) The course: the world does not depend on the player, so record it once per seed
-function makeCourse(lab, endlessMode) {
+function makeCourse(lab, endlessMode, cozy) {
   const { STEP, TU } = lab.consts;
   lab.start();
   const g = lab.g, all = new Set(), items = new Set(), frames = [];
   let endlessFrames = endlessMode === "max" ? 40 * 60 : 130 * 60;
   while (true) {
-    lab.advanceWorld(STEP);
+    const dt = lab.stepWorld(STEP);
+    if (g.shopNow) {                                // the shop: time stands still, maybe buy COZY
+      g.shopNow = false;
+      if (cozy) g.cozyNext = 10;
+    }
     for (const o of g.obs) all.add(o);
     for (const it of g.items) items.add(it);
     g.obs = g.obs.filter(o => o.x + o.w > g.dist - 400);
-    frames.push({ dist: g.dist, speed: g.speed, L: g.L, endless: g.endless });
+    frames.push({ dist: g.dist, speed: g.speed, L: g.L, endless: g.endless, t: g.simT, dt });
     if (!g.endless && g.L >= TU && g.levelT >= 10) {      // same as CONTINUE on the goal screen
       g.endless = true;
       g.endlessT = endlessMode === "max" ? 1e6 : 0;
@@ -131,7 +139,7 @@ function solve(lab, course) {
         lab.input.slideHeld = slide;
         if (jump) p.buffer = 0.12;                 // same as a jump keydown (held, no short hop)
         const pits = g.pits;
-        lab.updatePlayer(STEP);
+        lab.updatePlayer(f.dt);
         if (g.pits !== pits || lab.firstHit()) continue;
         const k = key(p, slide);
         if (!seen.has(k)) seen.set(k, { p: p, slide: slide });
@@ -153,6 +161,21 @@ function checkRules(lab, course) {
     while (lo < hi) { const m = (lo + hi) >> 1; if (fr[m].dist + PX < x) lo = m + 1; else hi = m; }
     return fr[lo].speed;
   };
+  // Level intros (slow motion under the banner): nothing reaches the player from 0.5 s before
+  // a level starts until INTRO_CALM after its intro
+  const { LEVEL_TIME, TU, INTRO_SIM, INTRO_CALM } = lab.consts;
+  const timeAt = x => {
+    let lo = 0, hi = fr.length - 1;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (fr[m].dist + PX + 12 < x) lo = m + 1; else hi = m; }
+    return fr[lo].t;
+  };
+  for (const o of course.obs) {
+    const t0 = timeAt(o.x), t1 = timeAt(o.x + o.w + 12);
+    for (let L = 1; L <= TU; L++) {
+      const a = L * LEVEL_TIME - 0.5 + 0.05, b = L * LEVEL_TIME + INTRO_SIM + INTRO_CALM - 0.05;
+      if (t1 > a && t0 < b) bad.push({ why: o.type + " during a level intro", x: Math.round(o.x), level: L });
+    }
+  }
   const main = course.obs.filter(o => o.type !== "spike");
   main.forEach((t, i) => {
     if (t.type !== "tunnel") return;
@@ -190,14 +213,17 @@ function report(course, fail, lab) {
 }
 
 function runSeeds(first, n) {
-  const totals = { seeds: 0, courses: 0, impossible: 0, obstacles: 0, tunnels: 0, floorBugs: 0,
+  const totals = { seeds: 0, courses: 0, cozyCourses: 0, reducedMotionCourses: 0, impossible: 0, obstacles: 0, tunnels: 0, floorBugs: 0,
                    tunnelsWithTwoBugs: 0, ruleViolations: 0, maxSpeed: 0, maxFront: 0 };
   const fails = [];
   for (let seed = first; seed < first + n; seed++) {
     const modes = seed % 10 === 0 ? ["max", "ramp"] : ["max"];
+    const cozy = seed % 4 === 1, reduced = seed % 4 === 2;
     for (const mode of modes) {
-      const lab = loadGame(rng(seed * 7919 + (mode === "ramp" ? 1 : 0)));
-      const course = makeCourse(lab, mode);
+      const lab = loadGame(rng(seed * 7919 + (mode === "ramp" ? 1 : 0)), reduced);
+      const course = makeCourse(lab, mode, cozy);
+      if (cozy) totals.cozyCourses++;
+      if (reduced) totals.reducedMotionCourses++;
       lab.start();                                 // fresh player, same course
       const res = solve(lab, course);
       const bad = checkRules(lab, course);
