@@ -19,10 +19,14 @@
           background: #ffffff; border: 2px solid #0b0d1f;
           align-items: center; justify-content: center; }
   #logo img { display: block; width: 88%; height: 72%; object-fit: contain; }
+  /* The flags of the Tuwaiq level, drawn at full resolution over the canvas (see "flags") */
+  #flags { position: fixed; display: none; pointer-events: none; background: transparent;
+           border: 0; box-shadow: none; image-rendering: auto; }
 </style>
 </head>
 <body>
 <canvas id="game" tabindex="0" aria-label="Indie Run, an endless runner game"></canvas>
+<canvas id="flags" aria-hidden="true"></canvas>
 <div id="logo"><img alt="Tuwaiq Academy logo"></div>
 <script>
 // Real numbers from the clean data. The dashboard replaces everything between the two
@@ -31,6 +35,8 @@ window.GAME_DATA = /*GAME_DATA*/{"releases": {"2020": 6089, "2021": 5692, "2022"
 // The dashboard writes the logo in here as a data URI (the iframe cannot load repo files);
 // opened on its own, the file falls back to the image next to it.
 window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
+// The Flag of Saudi Arabia (the public-domain file from Wikimedia Commons), written in the same way
+window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
 </script>
 <script>
 (function () {
@@ -126,7 +132,109 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     logoEl.style.height = (box.h * k) + "px";
     logoEl.style.display = "flex";
   }
-  addEventListener("resize", () => { logoShown = "resize"; });
+  addEventListener("resize", () => { logoShown = "resize"; flagKey = null; });
+
+  // ---------------------------------------------------------------- flags (Tuwaiq level)
+  // The Tuwaiq level's far background shows two flags on poles: the Flag of Saudi Arabia (the
+  // official image file, as is) and the Tuwaiq Academy logo (as is) on a white flag. They are
+  // drawn at full screen resolution on a small canvas over the game, never pixelated, so nothing
+  // in the game is ever drawn over them: they sit above all that moves, tunnels and crunch bars
+  // in this level stop below them, and they are hidden while a banner or a menu covers the
+  // scene. The poles are pixel art behind the campus. The Saudi flag flies on the left (the
+  // place of honour) and higher, upright, hoist at the pole. Waving: thin vertical strips moved
+  // by a gentle sine wave (more away from the pole); the frames are made once per screen size,
+  // a few per frame of the game. With reduced motion the flags hang still.
+  const flagsEl = document.getElementById("flags");
+  const flagImg = new Image();
+  let flagOk = false, flagKey = null, flagSet = null, flagShown = -1, flagsOn = false, flagAlpha = -1;
+  flagImg.onload = () => { flagOk = true; flagKey = null; };
+  flagImg.src = window.SAUDI_FLAG || "assets/saudi_flag.png";
+  logoImg.addEventListener("load", () => { flagKey = null; });
+  const FLAG_BOX = { x: 203, y: 20, w: 84, h: 32 };       // the flag canvas, in game px
+  const FLAGS = [
+    { pole: 205, top: 22, cloth: { x: 206, y: 24, w: 30, h: 20 }, field: false },   // 3 : 2
+    { pole: 247, top: 27, cloth: { x: 248, y: 29, w: 34, h: 17 }, field: true },    // 2 : 1
+  ];
+  const FLAG_FLOOR = 56;             // tunnels and crunch bars of the Tuwaiq level start here
+  const WAVE_N = 24, WAVE_T = 1.5, WAVE_A = 1.3;           // frames per wave, seconds, game px
+  function flagSource(F) { return F.field ? (logoOk ? logoImg : null) : (flagOk ? flagImg : null); }
+  // Start making the frames for kd device px per game px (they are filled in by flagWork)
+  function flagSetFor(kd) {
+    return {
+      kd: kd, done: false,
+      flags: FLAGS.map(F => {
+        const src = flagSource(F);
+        if (!src) return null;
+        const c = F.cloth, w = Math.round(c.w * kd), h = Math.round(c.h * kd);
+        const base = mk(w, h), bx = base.getContext("2d");
+        bx.imageSmoothingEnabled = true;
+        if (bx.imageSmoothingQuality) bx.imageSmoothingQuality = "high";
+        if (F.field) {                             // the logo, as is, centred on a white flag
+          bx.fillStyle = "#ffffff"; bx.fillRect(0, 0, w, h);
+          const k = Math.min(w * 0.86 / src.naturalWidth, h * 0.62 / src.naturalHeight);
+          const lw = src.naturalWidth * k, lh = src.naturalHeight * k;
+          bx.drawImage(src, (w - lw) / 2, (h - lh) / 2, lw, lh);
+        } else bx.drawImage(src, 0, 0, w, h);
+        return { base: base, w: w, h: h, A: WAVE_A * kd, frames: [] };
+      }),
+    };
+  }
+  function flagWork(n) {             // make up to n more frames; true when all are made
+    if (!flagSet || flagSet.done) return true;
+    const need = REDUCED ? 1 : WAVE_N, strip = Math.max(1, Math.round(flagSet.kd / 2));
+    for (const fl of flagSet.flags) {
+      while (fl && fl.frames.length < need && n > 0) {
+        const f = fl.frames.length, pad = Math.ceil(fl.A) + 1;
+        const fc = mk(fl.w, fl.h + 2 * pad), fx = fc.getContext("2d");
+        for (let x = 0; x < fl.w; x += strip) {
+          const t = x / fl.w, sw = Math.min(strip, fl.w - x);
+          const dy = REDUCED ? 0 : fl.A * t * Math.sin(Math.PI * 2 * (t * 1.1 - f / need));
+          fx.drawImage(fl.base, x, 0, sw, fl.h, x, pad + dy, sw, fl.h);
+        }
+        fl.frames.push(fc);
+        n--;
+      }
+    }
+    flagSet.done = flagSet.flags.every(fl => !fl || fl.frames.length >= need);
+    return flagSet.done;
+  }
+  // Show the flags (alpha for the cross-fade into the level) or hide them; prepare = make the
+  // frames ahead (under the level banner) without showing them
+  function placeFlags(on, alpha, prepare) {
+    if ((on || prepare) && flagOk) {
+      const r = cv.getBoundingClientRect(), k = (r.width - 2 * BORDER) / W;
+      const kd = k * (window.devicePixelRatio || 1);
+      const key = [r.left, r.top, r.width, kd, logoOk].join();
+      if (key !== flagKey) {
+        flagKey = key; flagShown = -1;
+        flagSet = flagSetFor(kd);
+        flagsEl.width = Math.round(FLAG_BOX.w * kd); flagsEl.height = Math.round(FLAG_BOX.h * kd);
+        flagsEl.style.left = (r.left + BORDER + FLAG_BOX.x * k) + "px";
+        flagsEl.style.top = (r.top + BORDER + FLAG_BOX.y * k) + "px";
+        flagsEl.style.width = (FLAG_BOX.w * k) + "px";
+        flagsEl.style.height = (FLAG_BOX.h * k) + "px";
+      }
+      if (!on) { flagWork(2); on = false; }
+      else if (!flagWork(on ? 1000 : 2)) on = false;
+    } else on = false;
+    if (!on) {
+      if (flagsOn) { flagsEl.style.display = "none"; flagsOn = false; }
+      return;
+    }
+    if (!flagsOn) { flagsEl.style.display = "block"; flagsOn = true; }
+    if (alpha !== flagAlpha) { flagAlpha = alpha; flagsEl.style.opacity = String(alpha); }
+    const f = REDUCED ? 0 : Math.floor(clock / WAVE_T * WAVE_N) % WAVE_N;
+    if (f === flagShown) return;
+    flagShown = f;
+    const fx = flagsEl.getContext("2d"), kd = flagSet.kd;
+    fx.clearRect(0, 0, flagsEl.width, flagsEl.height);
+    FLAGS.forEach((F, i) => {
+      const fl = flagSet.flags[i];
+      if (!fl) return;
+      const img = fl.frames[Math.min(f, fl.frames.length - 1)];
+      fx.drawImage(img, Math.round((F.cloth.x - FLAG_BOX.x) * kd), Math.round((F.cloth.y - FLAG_BOX.y) * kd) - Math.ceil(fl.A) - 1);
+    });
+  }
 
   // ---------------------------------------------------------------- pixel font (mostly 3x5)
   const GLYPHS = {
@@ -579,7 +687,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       mid: "neon", midC: { midHi: "#6a2a7a", lit: "#ff3fa4", lit2: "#2ee6e6" },
       lights: ["#ff3fa4", "#2ee6e6", PAL.yellow], ground: "#2a0a33", line: "#ff3fa4", dash: "#5c1a66",
       accent: "#ff7ac8" },
-    { name: "TUWAIQ ACADEMY", sky: ["#140b38", "#2b1a72", "#5634c4"], stars: true, deco: "glow",
+    { name: "TUWAIQ ACADEMY", sky: ["#140b38", "#2b1a72", "#5634c4"], stars: true, deco: "glow", flags: true,
       far: "skyline", farC: { far: "#33238a", win: "#4b39a8", lit: "#b9a6ff" },
       mid: "campus", midC: { mid: "#4f2bb8", midHi: "#7457e0", win: "#3a2290", lit: "#d9ceff" },
       lights: ["#ffffff", "#d9ceff", PAL.yellow], ground: "#24165e", line: "#b9a6ff", dash: "#3d2a92",
@@ -1416,7 +1524,15 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       }
     }
     const fo = -Math.floor(dist * 0.15) % TILE, mo = -Math.floor(dist * 0.4) % TILE;
-    drawLayer(T.farL, fo); drawLayer(T.midL, mo);
+    drawLayer(T.farL, fo);
+    if (T.flags) {                                 // the flag poles, behind the campus
+      for (const F of FLAGS) {
+        ctx.fillStyle = PAL.ink; ctx.fillRect(F.pole + 1, F.top + 2, 1, GROUND - F.top - 2);
+        ctx.fillStyle = "#d9d6ea"; ctx.fillRect(F.pole, F.top + 2, 1, GROUND - F.top - 2);
+        ctx.fillStyle = PAL.yellow; ctx.fillRect(F.pole - 1, F.top, 3, 2);
+      }
+    }
+    drawLayer(T.midL, mo);
     for (let k = 0; k < 2; k++) {
       const off = mo + k * TILE;
       if (off > W || off + TILE < 0) continue;
@@ -1494,18 +1610,22 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   const STRIP_W = 1600;
   const TUNNEL_STRIP = drawInto(mk(STRIP_W, CEIL + 1), () => drawTunnelBody(0, STRIP_W));
   const CRUNCH_STRIP = drawInto(mk(STRIP_W, CEIL + 1), () => drawCeilingBody(0, STRIP_W));
-  function drawStripPart(img, sx, w) {
+  function drawStripPart(img, sx, w, top) {
     for (let at = 0; at < w; at += STRIP_W) {      // (longer than a strip: repeat it)
       const a = Math.max(at, -sx), b = Math.min(w, at + STRIP_W, W - sx);
-      if (b > a) ctx.drawImage(img, a - at, 0, b - a, CEIL + 1, sx + a, 0, b - a, CEIL + 1);
+      if (b > a) ctx.drawImage(img, a - at, top, b - a, CEIL + 1 - top, sx + a, top, b - a, CEIL + 1 - top);
     }
   }
+  // the top of tunnels and crunch bars: the top of the screen, or below the Tuwaiq flags
+  const ceilingTop = () => (g && g.L >= TU ? FLAG_FLOOR : 0);
   function drawCeilingObstacle(o, sx) {
-    const lip = CEIL - 16;
-    drawStripPart(o.type === "crunch" ? CRUNCH_STRIP : TUNNEL_STRIP, sx, o.w);
-    ctx.fillStyle = PAL.ink; ctx.fillRect(sx - 1, 0, 1, CEIL + 1); ctx.fillRect(sx + o.w, 0, 1, CEIL + 1);
+    const lip = CEIL - 16, top = ceilingTop();
+    drawStripPart(o.type === "crunch" ? CRUNCH_STRIP : TUNNEL_STRIP, sx, o.w, top);
+    ctx.fillStyle = PAL.ink;
+    ctx.fillRect(sx - 1, top, 1, CEIL + 1 - top); ctx.fillRect(sx + o.w, top, 1, CEIL + 1 - top);
+    if (top) ctx.fillRect(sx - 1, top - 1, o.w + 2, 1);
     if (o.type === "tunnel") {
-      ctx.fillStyle = "#4a4580"; ctx.fillRect(sx, 0, 2, lip); ctx.fillRect(sx + o.w - 2, 0, 2, lip);
+      ctx.fillStyle = "#4a4580"; ctx.fillRect(sx, top, 2, lip - top); ctx.fillRect(sx + o.w - 2, top, 2, lip - top);
     }
     ceilingLabels(sx, o.w, o.type === "crunch" ? "CRUNCH" : "CRUNCH TUNNEL");
   }
@@ -1609,14 +1729,14 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     }
     const lines = LEVEL_LINES[Math.min(B.L, TU)];
     if (B.L >= TU) {                               // the final level: name + logo
-      const w = 236, x0 = (W - w) / 2, y0 = 14;
+      const w = 236, x0 = (W - w) / 2, y0 = 23;
       frameBox(x0, y0, w, 94, T.accent, "rgba(11, 13, 31, 0.9)");
       text("FINAL LEVEL", W / 2, y0 + 5, PAL.muted, 1, "center");
       shadowText("TUWAIQ ACADEMY", W / 2, y0 + 13, T.accent, 3, "center");
       lines.forEach((l, i) => text(l, W / 2, y0 + 68 + i * 8, i ? PAL.yellow : PAL.text, 1, "center"));
       return { x: W / 2 - 60, y: y0 + 34, w: 120, h: 28 };
     }
-    const w = 240, x0 = (W - w) / 2, y0 = 18;
+    const w = 240, x0 = (W - w) / 2, y0 = 24;
     frameBox(x0, y0, w, 56 + lines.length * 8, T.accent, "rgba(11, 13, 31, 0.88)");
     text("LEVEL " + (B.L + 1) + " OF " + (TU + 1) + ": " + T.name, W / 2, y0 + 5, PAL.muted, 1, "center");
     shadowText(YEARS[B.L], W / 2, y0 + 13, T.accent, 4, "center");
@@ -1657,7 +1777,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     if (B && state === "play") logo = drawBanner(B);
     if (g.toast) {
       const t = g.toast, w = Math.max(textW(t.title), textW(t.fact)) + 12;
-      const x0 = Math.floor((W - w) / 2), y0 = B ? 112 : 44;
+      const x0 = Math.floor((W - w) / 2), y0 = B ? 119 : g.L >= TU ? 60 : 44;
       ctx.fillStyle = PAL.ink; ctx.fillRect(x0, y0, w, 20);
       ctx.fillStyle = t.col; ctx.fillRect(x0, y0, w, 1); ctx.fillRect(x0, y0 + 19, w, 1);
       text(t.title, W / 2, y0 + 4, t.col, 1, "center");
@@ -1788,6 +1908,9 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       if (state === "over") drawOver();
     }
     placeLogo(logo);
+    const tuwaiq = playing && g.L >= TU;
+    const clear = tuwaiq && (state === "play" || state === "dying") && !g.intro && !g.banner;
+    placeFlags(clear, g && g.fade > 0 ? 1 - g.fade / 0.6 : 1, tuwaiq || (playing && g.L === TU - 1 && g.levelT > LEVEL_TIME - 6));
   }
 
   // ---------------------------------------------------------------- input
@@ -1994,6 +2117,9 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
                    cozy: +g.cozy.toFixed(2), cozyNext: g.cozyNext, bought: g.bought.slice(), hearts: g.hearts } : null;
     },
     get logoVisible() { return logoVisible; },
+    get flagsVisible() { return flagsOn; },
+    get flagFrames() { return flagSet ? flagSet.flags.map(fl => (fl ? fl.frames.length : 0)) : []; },
+    get ceilingTop() { return ceilingTop(); },
     get player() {
       return p ? { y: p.y, onGround: p.onGround, sliding: g ? sliding() : false, hop: p.hop } : null;
     },

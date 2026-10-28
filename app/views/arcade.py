@@ -12,6 +12,8 @@ from common import A, C, card, key_insights
 
 GAME_FILE = Path(__file__).resolve().parents[1] / "game" / "indie_run.html"
 LOGO_FILE = GAME_FILE.parent / "assets" / "tuwaiq_logo.png"   # official logo, used as is
+# The Flag of Saudi Arabia, the public-domain file from Wikimedia Commons, used as is
+FLAG_FILE = GAME_FILE.parent / "assets" / "saudi_flag.png"
 GAME_MAX_W = 1000                                  # same cap as MAX_W in indie_run.html
 GAME_FRAME = 10                                    # canvas border (2 x 3 px) + shadow (4 px)
 GAME_FRAME_H = GAME_MAX_W * 9 // 16 + GAME_FRAME   # 572 px
@@ -43,16 +45,22 @@ def arcade_numbers():
     }
 
 
+def data_uri(path):
+    return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+
+
 def game_html(numbers):
-    """The game page with the real numbers in GAME_DATA and the logo as a data URI
+    """The game page with the real numbers in GAME_DATA and the logo and flag as data URIs
     (the component iframe cannot load files from the repo)."""
     payload = json.dumps(numbers).replace("</", "<\\/")
-    logo = "data:image/png;base64," + base64.b64encode(LOGO_FILE.read_bytes()).decode("ascii")
     html = re.sub(r"/\*GAME_DATA\*/.*?/\*END_GAME_DATA\*/",
                   lambda m: f"/*GAME_DATA*/{payload}/*END_GAME_DATA*/",
                   GAME_FILE.read_text(encoding="utf-8"), count=1, flags=re.S)
-    return re.sub(r"/\*TUWAIQ_LOGO\*/.*?/\*END_TUWAIQ_LOGO\*/",
-                  lambda m: f'/*TUWAIQ_LOGO*/"{logo}"/*END_TUWAIQ_LOGO*/', html, count=1, flags=re.S)
+    for marker, path in (("TUWAIQ_LOGO", LOGO_FILE), ("SAUDI_FLAG", FLAG_FILE)):
+        uri = data_uri(path)
+        html = re.sub(rf"/\*{marker}\*/.*?/\*END_{marker}\*/",
+                      lambda m: f'/*{marker}*/"{uri}"/*END_{marker}*/', html, count=1, flags=re.S)
+    return html
 
 
 U.filters_note()
@@ -66,7 +74,8 @@ with card("arcade"):
     components.html(game_html(game), height=GAME_FRAME_H)
     st.markdown("<p class='caveat game-note'>Click the game to focus it; keys only reach the "
                 "game while it has focus. Uses the full 2020–2024 data; the sidebar filters do "
-                "not apply here.</p>", unsafe_allow_html=True)
+                "not apply here. Flag of Saudi Arabia: public-domain image from Wikimedia "
+                "Commons.</p>", unsafe_allow_html=True)
 with card("arcade_data"):
     st.markdown("#### How the game uses the data")
     st.markdown(
