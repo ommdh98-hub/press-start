@@ -19,6 +19,12 @@ GAME_FRAME = 10                                    # canvas border (2 x 3 px) + 
 GAME_FRAME_H = GAME_MAX_W * 9 // 16 + GAME_FRAME   # 572 px
 
 
+def game_setting(name):
+    """A number set in the game file (one source of truth for the text on this page)."""
+    m = re.search(rf"\b{name} = (\d+)", GAME_FILE.read_text(encoding="utf-8"))
+    return int(m.group(1))
+
+
 @st.cache_data
 def arcade_numbers():
     """Real numbers for the Indie Run game (full clean data; sidebar filters do not apply)."""
@@ -79,10 +85,12 @@ with card("arcade"):
 with card("arcade_data"):
     st.markdown("#### How the game uses the data")
     st.markdown(
-        f"- **Difficulty follows real release counts.** Each 15-second level is a release "
+        f"- **Difficulty follows real release counts.** Each {game_setting('LEVEL_TIME')}-second "
+        f"level is a release "
         f"year. Speed and obstacle density grow with that year's Indie releases in the clean "
         f"data: {rel[first]:,} in {first} → {rel[last]:,} in {last}. A final Tuwaiq Academy "
-        f"level follows; reaching 10,000 points completes the run.\n"
+        f"level follows; reaching {game_setting('GOAL'):,} points there means your game became "
+        f"a hit and completes the run.\n"
         f"- **Power-ups come from factors associated with Indie hits.** Multiplayer "
         f"({pw['multiplayer']}% hit rate vs {pw['single_player']}% single-player), "
         f"Localization (10+ languages: {pw['languages_10plus']}% vs {pw['one_language']}% "

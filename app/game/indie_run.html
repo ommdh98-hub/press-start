@@ -46,7 +46,7 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
   const D = window.GAME_DATA;
   const W = 288, H = 162, GROUND = 138, PX = 40, STEP = 1 / 60;
   const GRAVITY = 1000, JUMP_V = 300, DOUBLE_V = 265;  // single jump: 45 px high, 0.6 s in the air
-  const LEVEL_TIME = 25, EASY_TIME = 10, LIVES = 3, GOAL = 10000;
+  const LEVEL_TIME = 25, EASY_TIME = 10, LIVES = 3, GOAL = 15000;
   // Within a level the speed rises by up to 12% and obstacles get up to 18% denser
   const RAMP = 0.12, DENSER = 0.18;
   // Level intro: the game runs at 30% speed for 2.5 s under the level banner, then ramps back
@@ -78,7 +78,7 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
     if (n === Math.max.apply(null, REL)) return [d + "THE MARKET IS PACKED.", "SURVIVE THE CROWD."];
     return [d + "THE MARKET GETS BUSY.", "STAY SHARP: NEW HAZARDS AHEAD."];
   });
-  LEVEL_LINES.push(["GRADUATION DAY: THE FINAL CHALLENGE.", "REACH " + GOAL.toLocaleString("en-US") + " POINTS TO GRADUATE!"]);
+  LEVEL_LINES.push(["THE FINAL CHALLENGE: TURN YOUR GAME INTO A HIT.", "REACH " + GOAL.toLocaleString("en-US") + " POINTS!"]);
 
   const cv = document.getElementById("game");
   const screen = cv.getContext("2d");
@@ -396,6 +396,10 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
   // A tall stack of three crash windows (9 x 21): jump over it
   const CRASH_WIN = ["RRRRRRwRw", "wwwwwwwww", "wwwwRwwww", "wwwwRwwww", "wwwwwwwww", "wwwwRwwww", "ggggggggg"];
   const WALL = outlined(CRASH_WIN.concat(CRASH_WIN, CRASH_WIN));
+  // A server tower of six crash windows with a warning cap (9 x 46): one jump peaks at 45 px,
+  // so it takes a double jump
+  const TOWER = outlined(["ooyoyoyoo", "oyoyoyoyo", "ooyoyoyoo", "ooooooooo"]
+    .concat(CRASH_WIN, CRASH_WIN, CRASH_WIN, CRASH_WIN, CRASH_WIN, CRASH_WIN));
   // A low flying drone bug (11 x 7, flies 8-15 px above the ground): slide under it
   const DRONE_BODY = [".ooooooooo.", "ooyoooooyoo", ".ooooooooo.", "..k.k.k.k.."];
   const DRONE = [outlined(["mmm.....mmm", ".m...m...m.", "..ppppppp.."].concat(DRONE_BODY)),
@@ -801,6 +805,13 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
         tone(a, t, f, f, i === 5 ? 0.5 : 0.12, "square", 0.11));
       [[131, 0], [196, 0.3], [262, 0.6]].forEach(([f, t]) => tone(a, t, f, f, 0.3, "triangle", 0.25));
     },
+    win: a => {                                    // a short fanfare: pick-up, theme, final chord
+      [[392, 0, 0.09], [392, 0.1, 0.09], [392, 0.2, 0.09], [523, 0.32, 0.3], [466, 0.66, 0.14],
+       [523, 0.82, 0.14], [587, 0.98, 0.14], [659, 1.14, 0.5]].forEach(([f, t, d]) => tone(a, t, f, f, d, "square", 0.11));
+      [[784, 1.14], [988, 1.14]].forEach(([f, t]) => tone(a, t, f, f, 0.55, "square", 0.05));
+      [[131, 0.32], [175, 0.66], [196, 0.98], [262, 1.14]].forEach(([f, t]) => tone(a, t, f, f, 0.34, "triangle", 0.25));
+      noise(a, 1.14, 0.3, 0.06);
+    },
     over: a => { notes(a, [392, 330, 262, 196], 0.14, "square", 0.11); tone(a, 0.56, 98, 65, 0.4, "triangle", 0.25); },
     blip: a => tone(a, 0, 660, 660, 0.05, "square", 0.07),
     deny: a => tone(a, 0, 160, 120, 0.12, "square", 0.08),
@@ -844,24 +855,25 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
     return 1.9 / Math.pow(b.ratio, 0.9) / b.extra / (1 + DENSER * rampOf(lt));
   }
   const speedAt = t => { const L = levelAt(t); return speedFor(L, t - L * LEVEL_TIME); };
-  // 0.49 points per pixel + 10 per star: for a player who collects the stars on their way and
-  // buys a couple of items, 10,000 comes ~10 s into the Tuwaiq level (more stars or MARKETING:
+  // 0.57 points per pixel + 10 per star: for a player who collects the stars on their way and
+  // buys a couple of items, the goal comes ~35-40 s into the Tuwaiq level (more stars or MARKETING:
   // earlier, fewer: later; never before that level's intro is over)
-  const DIST_PTS = 0.49, STAR_PTS = 10;
+  const DIST_PTS = 0.57, STAR_PTS = 10;
   const score = () => Math.floor(g.points);
   const scoreMult = () => (g.mktL === g.L ? 2 : 1);   // MARKETING: x2 score for one level
   const levelAt = t => Math.min(TU, Math.floor(t / LEVEL_TIME));
 
   function reset() {
     g = { dist: 0, simT: 0, L: 0, levelT: 0, speed: speedFor(0, 0), stars: 0, lives: LIVES, points: 0,
-          introduced: {}, lastNewT: -1e9, passed: { wall: 0, drone: 0, mover: 0 }, hitBy: {},
+          introduced: {}, lastNewT: -1e9, passed: { wall: 0, drone: 0, mover: 0, tower: 0 }, hitBy: {},
+          chainsDone: 0,
           spent: 0, hearts: LIVES, shieldN: 0, magnetL: -1, mktL: -1, cozyNext: 0, bought: [],
           shopNow: false,
           obs: [], items: [], parts: [], floats: [], nextX: W + 30, nextPowerT: 12,
           lastEnd: 0, segStart: W + 30,
           shield: 0, magnet: 0, cozy: 0, invuln: 0, shake: 0, deadT: 0,
           intro: { L: 0, t: 0 }, banner: null, toast: null, fade: 0, fromL: 0,
-          tunnels: {}, spikes: {}, rowN: 0, rowI: 0, goalDone: false, endless: false, endlessT: 0, finished: false,
+          tunnels: {}, spikes: {}, rowN: 0, rowI: 0, chainN: 0, starChain: 0, goalDone: false, endless: false, endlessT: 0, finished: false,
           hits: 0, pits: 0, tunnelsPassed: 0, hopsCleared: 0 };
     p = { y: GROUND, vy: 0, onGround: true, jumps: 2, coyote: 0, buffer: 0, slideMin: 0,
           fastFall: 0, anim: 0, hop: false, hopT: 0, wasSliding: false, prevY: GROUND };
@@ -888,18 +900,20 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
   // ---------------------------------------------------------------- spawning (always fair)
   // Obstacle types, the year they unlock in (level index) and the hint shown the first time
   // one comes (in a calm moment, with extra room before and after it)
-  const UNLOCK = { wall: 1, drone: 2, mover: 3, bugbug: 3, twin: 3, bugdrone: 4, dronebug: 4 };
+  const UNLOCK = { wall: 1, drone: 2, chain: 2, mover: 3, bugbug: 3, twin: 3, bugdrone: 4, dronebug: 4 };
   const HINT = { wall: "JUMP!", drone: "SLIDE UNDER!", mover: "IT MOVES!", bugbug: "TWO BUGS!",
                  twin: "TWIN TUNNEL!", bugdrone: "JUMP, THEN SLIDE!", dronebug: "SLIDE, THEN JUMP!",
-                 bugs3: "3 FLOOR BUGS!" };
+                 bugs3: "3 FLOOR BUGS!", chain: "COMBO CHAIN!", tower: "DOUBLE JUMP!" };
   const NEW_BEFORE = 1.4, NEW_AFTER = 1.4, NEW_GAP = 5;   // seconds; one new type per 5 s at most
   const WEIGHTS = [
     { bug: 50, gap: 30, crunch: 20 },
     { bug: 30, gap: 24, crunch: 14, tunnel: 16, wall: 16 },
-    { bug: 20, gap: 18, crunch: 10, tunnel: 16, wall: 14, drone: 22 },
-    { bug: 14, gap: 14, crunch: 8, tunnel: 14, wall: 10, drone: 12, mover: 14, bugbug: 8, twin: 6 },
+    { bug: 20, gap: 18, crunch: 10, tunnel: 16, wall: 14, drone: 22, chain: 7 },
+    { bug: 14, gap: 14, crunch: 8, tunnel: 14, wall: 10, drone: 12, mover: 14, bugbug: 8, twin: 6, chain: 9 },
     { bug: 10, gap: 11, crunch: 6, tunnel: 12, wall: 10, drone: 10, mover: 12, bugbug: 9, twin: 6,
-      bugdrone: 8, dronebug: 6 },
+      bugdrone: 8, dronebug: 6, chain: 12 },
+    { bug: 9, gap: 10, crunch: 6, tunnel: 11, wall: 9, drone: 9, mover: 12, bugbug: 9, twin: 6,  // Tuwaiq
+      bugdrone: 8, dronebug: 6, chain: 16 },
   ];
   const MOVE_A = 14, MOVE_W = Math.PI * 2 / 1.6;   // a moving bug walks 14 px each way, 1.6 s
   const moverX = (o, t) => o.x0 + MOVE_A * Math.sin(MOVE_W * t + o.ph);
@@ -933,7 +947,45 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
     return Math.random() < 0.6 ? 1 : 0;
   }
   const ob = (type, x, w) => ({ type: type, x: x, w: w, dead: false, spikes: [] });
-  const SIZE = { bug: 11, wall: 9, drone: 11, mover: 11 };
+  const SIZE = { bug: 11, wall: 9, drone: 11, mover: 11, tower: 9 };
+  // Combo chains: hand-made runs of steps that flow into each other. J bug (jump), W crash
+  // wall (jump), D server tower (double jump), S drone (slide), C crunch bar (slide), H short
+  // tunnel with a floor bug (slide hop). Short and easy ones from 2022; from 2024 (and in the
+  // Tuwaiq level) the longer ones, with 12% tighter gaps. The gaps leave every action at least
+  // 0.25 s of slack at the chain's speed (tools/check_indie_run.js measures it).
+  const CHAINS = [
+    { from: 2, steps: "JS" }, { from: 2, steps: "SJ" }, { from: 2, steps: "JJS" }, { from: 2, steps: "SCJ" },
+    { from: 3, steps: "JSJS" }, { from: 3, steps: "DS" }, { from: 3, steps: "SHS" }, { from: 3, steps: "WSJ" },
+    { from: 4, steps: "JSDSHS" }, { from: 4, steps: "SJDJS" }, { from: 4, steps: "WSHJD" }, { from: 4, steps: "CSHSJ" },
+  ];
+  const ACT = { J: "jump", W: "jump", D: "double", S: "slide", C: "slide", H: "hop" };
+  const STEP_TYPE = { J: "bug", W: "wall", D: "tower", S: "drone" };
+  // seconds from the end of one step to the start of the next, at the chain's speed
+  const CHAIN_GAP = {
+    jump:   { jump: 0.85, double: 1.0, slide: 0.85, hop: 0.95 },
+    double: { jump: 1.2, double: 1.25, slide: 1.15, hop: 1.25 },
+    slide:  { jump: 0.55, double: 0.72, slide: 0.35, hop: 0.3 },
+    hop:    { jump: 0.6, double: 0.65, slide: 0.35, hop: 0.4 },
+  };
+  const CHAIN_BEFORE = 1.3, CHAIN_AFTER = 1.0;   // a clear stretch to get ready, and one after
+  function buildChain(P, L, spd, design) {
+    const pool = CHAINS.filter(c => L >= c.from && (L < 4 || c.from >= 3));
+    const c = design || pool[Math.floor(Math.random() * pool.length)], tight = L >= 4 ? 0.88 : 1;
+    const id = ++g.chainN;
+    let x = 0, prev = null;
+    for (const st of c.steps) {
+      if (prev) x += Math.round(CHAIN_GAP[ACT[prev]][ACT[st]] * tight * spd);
+      let o;
+      if (st === "H") o = addTunnel(P, x, 1, spd, true);
+      else if (st === "C") { o = ob("crunch", x, Math.round(rand(28, 36))); P.push(o); }
+      else { o = ob(STEP_TYPE[st], x, SIZE[STEP_TYPE[st]]); P.push(o); }
+      o.act = st; o.chainSteps = c.steps.length;
+      for (const q of [o].concat(o.spikes)) q.chain = id;
+      x = o.x + o.w; prev = st;
+    }
+    P[P.length - 1].chainEnd = true;
+    P.steps = c.steps;
+  }
   // A tunnel at x with n floor bugs, placed by the rules above; returns it
   function addTunnel(P, x, n, spd, short) {
     const len = n === 3 ? rand(3.4, 3.8) : n === 2 ? rand(2.3, 2.7)
@@ -970,7 +1022,8 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
       const a = addTunnel(P, 0, nb(), spd, true);
       const b = addTunnel(P, a.x + a.w + Math.round(rand(0.35, 0.5) * spd), nb(), spd, true);
       a.twinNext = true; b.twinOf = true;
-    } else addTunnel(P, 0, tunnelBugs(L), spd, false);
+    } else if (type === "chain") buildChain(P, L, spd);
+    else addTunnel(P, 0, tunnelBugs(L), spd, false);
     P.len = Math.max.apply(null, P.map(o => (o.hi !== undefined ? o.hi : o.x + o.w)));
     return P;
   }
@@ -1018,6 +1071,7 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
       const tunnelLike = type === "tunnel" || type === "twin";
       let P = buildPattern(type, L, spd, vmin);
       let x = tunnelLike ? Math.max(g.nextX, g.lastEnd + TUN_BEFORE * spd + ARC) : g.nextX;
+      if (type === "chain") x = Math.max(x, g.lastEnd + CHAIN_BEFORE * spd + ARC);
       if (!g.introduced[type] && UNLOCK[type] !== undefined) x = Math.max(x, g.lastEnd + NEW_BEFORE * spd);
       const cx = calmX(x, P.len);
       if (cx !== x) {
@@ -1030,6 +1084,8 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
         x = calmX(cx, P.len);
       }
       let hint = g.introduced[type] || !UNLOCK[type] ? "" : HINT[type];
+      const tower = P.find(o => o.type === "tower");
+      if (tower && !g.introduced.tower) { tower.hint = HINT.tower; g.introduced.tower = true; }
       if (P.some(o => o.spikes.length === 3) && !g.introduced.bugs3) { hint = HINT.bugs3; g.introduced.bugs3 = true; }
       if (UNLOCK[type] !== undefined) g.introduced[type] = true;
       if (hint) g.lastNewT = arriveT;
@@ -1037,22 +1093,26 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
         g.tunnels[L] = true;
         if (P.some(o => o.type === "spike")) g.spikes[L] = true;
       }
-      // Stars and power-ups go in the free run since the last obstacle, outside safe zones
-      fillSegment(g.segStart, tunnelLike ? x - TUN_BEFORE * spd : x, arriveT);
+      // Stars and power-ups go in the free run since the last obstacle, outside safe zones (and
+      // never in the clear stretch before a chain)
+      g.starChain = 0;
+      fillSegment(g.segStart, tunnelLike || type === "chain" ? x - TUN_BEFORE * spd : x, arriveT);
       for (const o of P) {
         o.x += x;
         if (o.type === "mover") { o.x0 += x; o.lo += x; o.hi += x; o.x = moverX(o, g.simT); }
         g.obs.push(o);
       }
       if (hint) P[0].hint = hint;
-      for (const o of P) if (o.type !== "spike") starsFor(o);
+      for (const o of P) if (o.type !== "spike") { g.starChain = o.chain || 0; starsFor(o); }
+      g.starChain = 0;
       // Free run after every pattern: at least 0.7 s of reaction time at the current speed
       let space = Math.max(spd * 0.7 + 18, spd * gapTimeFor(L, lt) * rand(0.8, 1.25));
       if (easy) space *= 1.7;
       if (hint) space = Math.max(space * 1.6, NEW_AFTER * spd);
       if (tunnelLike) space = Math.max(space, TUN_AFTER * spd + ARC);
+      if (type === "chain") space = Math.max(space, CHAIN_AFTER * spd + ARC);
       g.lastEnd = x + P.len;
-      g.segStart = x + P.len + (tunnelLike ? TUN_AFTER * spd : 0);
+      g.segStart = x + P.len + (tunnelLike || type === "chain" ? TUN_AFTER * spd : 0);
       g.nextX = x + P.len + space;
     }
     g.obs.sort((a, b) => a.x - b.x);
@@ -1060,7 +1120,9 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
   // Stars come in rows (a line, an arc or a single hint star); row + i let a test check that
   // every row reaches the screen whole
   function newRow() { g.rowN++; g.rowI = 0; }
-  function addStar(x, y) { g.items.push({ kind: "star", x: x, y: y, taken: false, row: g.rowN, i: g.rowI++ }); }
+  function addStar(x, y) {
+    g.items.push({ kind: "star", x: x, y: y, taken: false, row: g.rowN, i: g.rowI++, chain: g.starChain });
+  }
   // A whole row of evenly spaced stars from a to b, or nothing: a row never loses a star
   function starRow(a, b, step, y) {
     const n = Math.floor((b - a - 5) / step) + 1;
@@ -1072,7 +1134,7 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
   function starsFor(o) {
     const midX = o.x + o.w / 2 - 2;
     if (o.type === "tunnel") {                    // low rows of stars to collect while sliding
-      if (Math.random() < 0.7) {                  // whole rows between the floor bugs
+      if (o.chain || Math.random() < 0.7) {       // whole rows between the floor bugs
         let a = o.x + 10;
         for (const b of o.spikes) { starRow(a, b.x - 21, 14, GROUND - 5); a = b.x + 20; }
         starRow(a, o.x + o.w - 10, 14, GROUND - 5);
@@ -1080,13 +1142,15 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
       for (const b of o.spikes) { newRow(); addStar(b.x, GROUND - 9); }   // a hint above each floor bug
       return;
     }
-    if (Math.random() > 0.6) return;
+    if (!o.chain && Math.random() > 0.6) return;  // (a chain always shows its path in stars)
     newRow();
     if (o.type === "bug") {
       addStar(midX - 14, GROUND - 20); addStar(midX, GROUND - 30); addStar(midX + 14, GROUND - 20);
     } else if (o.type === "mover") {              // around the middle of its walk
       const mx = o.x0 + 3.5;
       addStar(mx - 14, GROUND - 24); addStar(mx, GROUND - 34); addStar(mx + 14, GROUND - 24);
+    } else if (o.type === "tower") {              // high, for the double jump
+      addStar(midX - 16, GROUND - 52); addStar(midX, GROUND - 64); addStar(midX + 16, GROUND - 52);
     } else if (o.type === "wall") {
       addStar(midX - 14, GROUND - 28); addStar(midX, GROUND - 38); addStar(midX + 14, GROUND - 28);
     } else if (o.type === "drone") {              // a low row to collect while sliding under it
@@ -1286,10 +1350,11 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
     g.hitBy[o.type] = (g.hitBy[o.type] || 0) + 1;
     loseLife();
   }
-  const WALL_H = 21, DRONE_Y = GROUND - 15, DRONE_H = 7;
+  const WALL_H = 21, TOWER_H = 46, DRONE_Y = GROUND - 15, DRONE_H = 7;
   function obstacleBox(o, sx) {
     if (o.type === "bug" || o.type === "mover") return setBox(OBOX, sx + 1, GROUND - 7, 9, 7);
     if (o.type === "wall") return setBox(OBOX, sx, GROUND - WALL_H, 9, WALL_H);
+    if (o.type === "tower") return setBox(OBOX, sx, GROUND - TOWER_H, 9, TOWER_H);
     if (o.type === "drone") return setBox(OBOX, sx + 1, DRONE_Y, 9, DRONE_H);
     if (o.type === "spike") return setBox(OBOX, sx, GROUND - SPIKE_H, SPIKE_W, SPIKE_H);
     return setBox(OBOX, sx + 1, 0, o.w - 2, CEIL);           // crunch bar or tunnel ceiling
@@ -1314,6 +1379,7 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
       o.counted = true;
       if (o.type === "tunnel") g.tunnelsPassed++;
       if (!o.dead && g.passed[o.type] !== undefined) g.passed[o.type]++;
+      if (o.chainEnd) g.chainsDone++;
       if (o.type === "spike" && !o.dead) g.hopsCleared++;
     }
   }
@@ -1346,15 +1412,36 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
     state = "over"; stateT = 0;
     clearInput();
   }
+  // The win: the player's Indie game became a hit. A burst of confetti and stars (still with
+  // reduced motion) and a fanfare (silent when muted).
+  const CONFETTI = [PAL.yellow, PAL.teal, PAL.purple, PAL.orange, PAL.blue, "#ff7ac8", PAL.text];
+  let confetti = [];
   function reachGoal() {
     g.goalDone = true;
     state = "goal"; stateT = 0; goalSel = 0;
     clearInput();
-    sfx("goal");
+    confetti = [];
+    for (let i = 0; i < 90; i++) {
+      const fromLeft = i % 2 === 0, a = (fromLeft ? -0.95 : -2.2) + rand(-0.35, 0.35), sp = rand(70, 170);
+      confetti.push({ x: fromLeft ? 8 : W - 8, y: H - 20, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+                      col: CONFETTI[i % CONFETTI.length], star: i % 6 === 0, spin: rand(0, 6) });
+    }
+    if (REDUCED) {                                 // no motion: a still sprinkle of stars
+      const r = seeded(7);
+      confetti.forEach(q => { q.x = 6 + r() * (W - 12); q.y = 4 + r() * (H - 10); q.vx = q.vy = 0; });
+    }
+    sfx("win");
+  }
+  function updateConfetti(rdt) {
+    if (REDUCED) return;
+    for (const q of confetti) {
+      q.vy += 90 * rdt; q.vx *= 1 - 0.6 * rdt; q.x += q.vx * rdt; q.y += q.vy * rdt; q.spin += rdt * 8;
+      if (q.y > H + 4) { q.y = -4; q.vy = rand(10, 40); q.x = rand(0, W); q.vx = rand(-15, 15); }   // keeps falling
+    }
   }
   function chooseGoal(i) {
     if (state !== "goal" || stateT < 0.8) return;   // ignore keys still mashed from playing
-    if (i === 0) {                                  // CONTINUE: endless run in the Tuwaiq theme
+    if (i === 0) {                                  // KEEP GROWING: endless run in the Tuwaiq theme
       state = "play"; stateT = 0;
       g.endless = true; g.invuln = 1.5;
       g.banner = { L: TU, t: 2, endless: true };
@@ -1479,7 +1566,8 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
     stateT += rdt;
     if (state === "title") { titleScroll += 40 * rdt; return; }
     if (state === "shop") { updateShop(rdt); return; }
-    if (state === "paused" || state === "over" || state === "goal") return;
+    if (state === "goal") { updateConfetti(rdt); return; }
+    if (state === "paused" || state === "over") return;
     if (g.banner && (g.banner.t -= rdt) <= 0) g.banner = null;
     if (g.toast && (g.toast.t -= rdt) <= 0) g.toast = null;
     g.fade = Math.max(0, g.fade - rdt);
@@ -1502,7 +1590,7 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
     countPassed();
     compact(g.obs, keepObs);
     compact(g.items, keepItem);
-    // The 10,000 goal can only be reached on the final level, after its intro
+    // The goal can only be reached on the final level, after its intro
     if (!g.goalDone && g.L >= TU && !g.intro && score() >= GOAL) reachGoal();
   }
 
@@ -1635,13 +1723,15 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
       const sx = Math.round(o.x - g.dist);
       if (sx > W || sx + o.w < 0) continue;
       if (o.hint && !o.counted && sx > PX + 24) {   // the first one of a new type: a sign
-        const top = o.type === "wall" ? GROUND - WALL_H - 10 : o.type === "drone" ? DRONE_Y - 10
+        const top = o.type === "wall" ? GROUND - WALL_H - 10 : o.type === "tower" ? GROUND - TOWER_H - 10
+          : o.type === "drone" ? DRONE_Y - 10
           : o.type === "tunnel" ? CEIL - 34 : GROUND - 20;
         shadowText("NEW: " + o.hint, sx + 5, top, PAL.yellow, 1, "center");
       }
       if (o.type === "bug") ctx.drawImage(BUG[Math.floor(clock * 8) % 2], sx - 1, GROUND - 9);
       else if (o.type === "mover") ctx.drawImage(MOVER[Math.floor(clock * 8) % 2], sx - 1, GROUND - 9);
       else if (o.type === "wall") ctx.drawImage(WALL, sx - 1, GROUND - WALL_H - 1);
+      else if (o.type === "tower") ctx.drawImage(TOWER, sx - 1, GROUND - TOWER_H - 1);
       else if (o.type === "drone") {
         ctx.fillStyle = "rgba(11, 13, 31, 0.45)";  // its shadow on the ground shows how low it is
         ctx.fillRect(sx + 1, GROUND - 1, 9, 1);
@@ -1651,7 +1741,7 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
       else {
         drawCeilingObstacle(o, sx);
         if (o.type === "crunch") continue;
-        if (!o.counted && !o.twinOf && sx > PX + 30) {   // a warning sign before the entrance
+        if (!o.counted && !o.twinOf && !o.chain && sx > PX + 30) {   // a warning sign before the entrance
           text("HOLD", sx - 4, CEIL - 26, PAL.yellow, 1, "right");
           text("SLIDE", sx - 4, CEIL - 19, PAL.yellow, 1, "right");
         }
@@ -1850,27 +1940,35 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
     text("PRESS P OR CLICK TO RESUME", W / 2, 80, PAL.text, 1, "center");
     drawMute();
   }
-  const GOAL_BTNS = [{ label: "CONTINUE", x: W / 2 - 74, y: 100, w: 70, h: 15 },
-                     { label: "FINISH", x: W / 2 + 4, y: 100, w: 70, h: 15 }];
+  const GOAL_BTNS = [{ label: "KEEP GROWING", x: W / 2 - 84, y: 106, w: 80, h: 15 },
+                     { label: "LAUNCH DAY", x: W / 2 + 4, y: 106, w: 80, h: 15 }];
+  const WIN_LINES = wrap("YOU SURVIVED FIVE CROWDED YEARS OF STEAM RELEASES, SPENT YOUR BUDGET WISELY, AND MADE IT INTO THE TOP 5%.", 58);
   function drawGoal() {
     dim(0.8);
-    shadowText("CONGRATULATIONS!", W / 2, 7, PAL.yellow, 3, "center");
-    shadowText("YOU MADE IT", W / 2, 26, PAL.text, 2, "center");
-    text("THANK YOU FOR PLAYING, AND THANK YOU, TUWAIQ ACADEMY!", W / 2, 41, PAL.muted, 1, "center");
-    text("SCORE " + fmtInt(score()), W / 2, 89, PAL.teal, 1, "center");
+    for (const q of confetti) {                    // confetti and little stars
+      const x = Math.round(q.x), y = Math.round(q.y);
+      if (q.star) { ctx.drawImage(STAR, x - 2, y - 2); continue; }
+      ctx.fillStyle = q.col;
+      if (Math.floor(q.spin) % 2) ctx.fillRect(x, y, 2, 1); else ctx.fillRect(x, y, 1, 2);
+    }
+    shadowText("YOUR GAME IS A HIT!", W / 2, 10, PAL.yellow, 3, "center");
+    WIN_LINES.forEach((l, i) => text(l, W / 2, 36 + i * 8, PAL.text, 1, "center"));
+    shadowText("ONLY " + pct(D.indie_hit_rate) + "% OF INDIE GAMES GET HERE. YOURS DID.", W / 2, 58, PAL.teal, 1, "center");
+    shadowText("SCORE " + fmtInt(score()), W / 2, 76, PAL.yellow, 2, "center");
     GOAL_BTNS.forEach((b, i) => {
       const on = i === goalSel;
       frameBox(b.x, b.y, b.w, b.h, on ? PAL.yellow : PAL.muted, on ? "#3a2a8a" : PAL.ink);
       text((on ? "> " : "") + b.label, b.x + b.w / 2, b.y + 5, on ? PAL.yellow : PAL.text, 1, "center");
     });
-    text("CONTINUE = ENDLESS RUN     FINISH = FINAL SCORE", W / 2, 122, PAL.muted, 1, "center");
-    text("ARROWS + ENTER, C / F, OR TAP A BUTTON", W / 2, 131, PAL.muted, 1, "center");
+    text("KEEP GROWING = ENDLESS RUN     LAUNCH DAY = FINAL SCORE", W / 2, 128, PAL.muted, 1, "center");
+    text("ARROWS + ENTER, K / L, OR TAP A BUTTON", W / 2, 137, PAL.muted, 1, "center");
     drawMute();
-    return { x: W / 2 - 60, y: 50, w: 120, h: 34 };
+    return null;                                   // (no logo here: it stays in the level)
   }
+
   function drawOver() {
     dim(0.72);
-    if (g.finished) shadowText("RUN COMPLETE", W / 2, 12, PAL.teal, 3, "center");
+    if (g.finished) shadowText("LAUNCH DAY!", W / 2, 12, PAL.teal, 3, "center");
     else shadowText("GAME OVER", W / 2, 12, PAL.orange, 4, "center");
     shadowText((g.finished ? "FINAL SCORE " : "SCORE ") + score(), W / 2, 40, PAL.text, 2, "center");
     text("BEST " + best + (newBest ? "   NEW BEST!" : ""), W / 2, 56, newBest && blink() ? PAL.yellow : PAL.muted, 1, "center");
@@ -1961,8 +2059,8 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
       if (c === "ArrowLeft" || c === "KeyA" || c === "ArrowUp") { if (goalSel !== 0) sfx("blip"); goalSel = 0; }
       else if (c === "ArrowRight" || c === "KeyD" || c === "ArrowDown") { if (goalSel !== 1) sfx("blip"); goalSel = 1; }
       else if (c === "Enter" || c === "Space") chooseGoal(goalSel);
-      else if (c === "KeyC") chooseGoal(0);
-      else if (c === "KeyF") chooseGoal(1);
+      else if (c === "KeyK" || c === "KeyC") chooseGoal(0);
+      else if (c === "KeyL" || c === "KeyF") chooseGoal(1);
       return;
     }
     if (state !== "play") return;
@@ -2087,7 +2185,7 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
       get g() { return g; },
       get p() { return p; },
       set p(v) { p = v; },
-      input, speedFor, advanceWorld, stepWorld, updatePlayer, firstHit, sliding, moverX,
+      input, speedFor, advanceWorld, stepWorld, updatePlayer, firstHit, sliding, moverX, buildChain, CHAINS,
     }));
   }
 
@@ -2124,7 +2222,7 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
       return p ? { y: p.y, onGround: p.onGround, sliding: g ? sliding() : false, hop: p.hop } : null;
     },
     get stats() {
-      return g ? { hits: g.hits, hitBy: g.hitBy, tunnelsPassed: g.tunnelsPassed, hopsCleared: g.hopsCleared, passed: g.passed,
+      return g ? { hits: g.hits, hitBy: g.hitBy, chains: g.chainsDone, tunnelsPassed: g.tunnelsPassed, hopsCleared: g.hopsCleared, passed: g.passed,
                    stars: g.stars, finished: g.finished, endless: g.endless } : null;
     },
     get ahead() {
@@ -2135,7 +2233,7 @@ window.SAUDI_FLAG = /*SAUDI_FLAG*/""/*END_SAUDI_FLAG*/;
     get obstacles() {
       if (!g) return [];
       return g.obs.filter(o => !o.dead && o.x + o.w - g.dist > PX - 4).slice(0, 6)
-        .map(o => ({ type: o.type, dx: o.x - g.dist - (PX + 10), w: o.w,
+        .map(o => ({ type: o.type, dx: o.x - g.dist - (PX + 10), w: o.w, step: o.chain ? o.act : "",
                      vx: o.type === "mover" ? MOVE_A * MOVE_W * Math.cos(MOVE_W * g.simT + o.ph) : 0 }));
     },
   };

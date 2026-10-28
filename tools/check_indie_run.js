@@ -1,6 +1,9 @@
 // Fairness check for INDIE RUN (app/game/indie_run.html). Plain Node, no packages:
 //   node tools/check_indie_run.js [seeds=500] [firstSeed=1] [--jobs=8] [--game=path/to/indie_run.html] [--rules-only]
 // (--rules-only skips the input search: the rule checks alone, in minutes)
+//   node tools/check_indie_run.js --chains [--jobs=10]
+// (every combo chain type, built by the game, at the slowest and fastest speed of every level
+// it can appear in and at endless top speed, each 10 times: full input search + human slack)
 // For every seed it runs the game's own world step (level intros in slow motion included)
 // through all year levels, the Tuwaiq level and endless mode (at top speed, plus some seeds
 // with the normal speed ramp, some with COZY bought in every shop and some with reduced
@@ -17,6 +20,7 @@ const vm = require("vm");
 
 const gameArg = process.argv.find(a => a.startsWith("--game="));
 const RULES_ONLY = process.argv.includes("--rules-only");
+const CHAINS_MODE = process.argv.includes("--chains");
 const GAME = gameArg ? path.resolve(gameArg.slice(7)) : path.join(__dirname, "..", "app", "game", "indie_run.html");
 const html = fs.readFileSync(GAME, "utf8");
 const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
@@ -78,7 +82,7 @@ function makeCourse(lab, endlessMode, cozy) {
     for (const it of g.items) items.add(it);
     g.obs = g.obs.filter(o => o.x + o.w > g.dist - 400);
     frames.push({ dist: g.dist, speed: g.speed, L: g.L, endless: g.endless, t: g.simT, dt });
-    if (!g.endless && g.L >= TU && g.levelT >= 10) {      // same as CONTINUE on the goal screen
+    if (!g.endless && g.L >= TU && g.levelT >= 40) {      // same as KEEP GROWING on the win screen
       g.endless = true;
       g.endlessT = endlessMode === "max" ? 1e6 : 0;
       if (endlessMode === "max") {
@@ -194,9 +198,10 @@ function checkRules(lab, course) {
     const v = speedAt(t.x), end = t.x + t.w, fail = why => bad.push({ why, x: Math.round(t.x), speed: +v.toFixed(1) });
     // a twin tunnel counts as one: its partner may sit in the zone, nothing else
     const prev = main[i - 1], next = main[i + 1];
-    const twinBefore = t.twinOf && prev && prev.type === "tunnel" && prev.twinNext;
-    const twinAfter = t.twinNext && next && next.type === "tunnel" && next.twinOf;
-    if (t.twinOf && !twinBefore) fail("twin tunnel without its partner");
+    // (inside a combo chain the steps around a tunnel follow the slack rule below instead)
+    const twinBefore = (t.twinOf && prev && prev.type === "tunnel" && prev.twinNext) || (t.chain && prev && prev.chain === t.chain);
+    const twinAfter = (t.twinNext && next && next.type === "tunnel" && next.twinOf) || (t.chain && next && next.chain === t.chain);
+    if (t.twinOf && !(prev && prev.type === "tunnel" && prev.twinNext)) fail("twin tunnel without its partner");
     if (!twinBefore && prev && (t.x - hi(prev)) / v < RULES.before) fail("obstacle in the safe zone before the entrance");
     if (!twinAfter && next && (lo(next) - end) / v < RULES.after) fail("obstacle in the safe zone after the exit");
     const tunnels = main.filter(o => o.type === "tunnel");
@@ -206,7 +211,8 @@ function checkRules(lab, course) {
       const inBefore = !twinBefore && ix + w > t.x - RULES.before * v && ix < t.x;
       const inAfter = !twinAfter && ix + w > end && ix < end + RULES.after * v;
       // (stars inside a tunnel are the low rows to collect while sliding)
-      if ((inBefore || inAfter) && !(it.kind === "star" && inAnyTunnel(ix, w))) fail(it.kind + " in a tunnel safe zone");
+      const ownChain = t.chain && it.chain === t.chain;   // the stars that show a chain's path
+      if ((inBefore || inAfter) && !ownChain && !(it.kind === "star" && inAnyTunnel(ix, w))) fail(it.kind + " in a tunnel safe zone");
     }
     const inside = course.obs.filter(o => o !== t && lo(o) < end && hi(o) > t.x);
     if (inside.some(o => o.type !== "spike")) fail("a non-floor-bug obstacle inside the tunnel");
@@ -218,6 +224,111 @@ function checkRules(lab, course) {
     });
   });
   return bad;
+}
+
+// 4) Human slack on combo chains. A chain is played with one input per action: jump, second
+// jump (double), slide (held through a run of slide steps, let go at the end of the run or
+// at the next jump) and slide hop. For each action every press time is tried, with the other
+// actions at their best times; the press times that still clear the whole chain must span at
+// least SLACK seconds of game time at the chain's real speed (no frame-perfect inputs).
+const SLACK = 0.25, SCAN = 45;
+function slackCheck(lab, course) {
+  lab.start();
+  const { PX } = lab.consts, g = lab.g, fr = course.frames, out = [];
+  const front = x => {                             // first frame where the player's front reaches x
+    let a = 0, b = fr.length - 1;
+    while (a < b) { const m = (a + b) >> 1; if (fr[m].dist + PX + 12 < x) a = m + 1; else b = m; }
+    return a;
+  };
+  const back = x => {                              // first frame where the player's back has passed x
+    let a = 0, b = fr.length - 1;
+    while (a < b) { const m = (a + b) >> 1; if (fr[m].dist + PX < x) a = m + 1; else b = m; }
+    return a;
+  };
+  const P0 = Object.assign({}, lab.p);
+  const chains = new Map();
+  for (const o of course.obs) if (o.chain) { if (!chains.has(o.chain)) chains.set(o.chain, []); chains.get(o.chain).push(o); }
+  for (const [id, list] of chains) {
+    list.sort((a, b) => lo(a) - lo(b));
+    const steps = list.filter(o => o.act), acts = [];
+    // (a chain cut short by the end of the recorded course, or by the endless cut, is skipped)
+    if (steps.length !== steps[0].chainSteps || back(hi(list[list.length - 1]) + 4) + 30 >= fr.length - 1) continue;
+    let run = null;
+    for (const o of steps) {
+      if ("SCH".includes(o.act)) {
+        if (!run) { run = { last: o }; acts.push({ kind: "slide", o, run }); }
+        run.last = o;
+        if (o.act === "H") for (const sp of o.spikes) acts.push({ kind: "hop", o: sp });
+      } else {
+        run = null;
+        acts.push({ kind: "jump", o });
+        if (o.act === "D") acts.push({ kind: "jump2", o });
+      }
+    }
+    const v = fr[front(lo(steps[0]))].speed;
+    const s0 = front(lo(steps[0]) - 1.2 * v), last = list[list.length - 1];
+    const e = Math.min(fr.length - 1, back(hi(last) + 4) + 6);
+    for (const a of acts) {
+      if (a.kind === "jump") a.t = front(lo(a.o) - (0.17 * v + 4));
+      if (a.kind === "slide") { a.t = front(lo(a.o) - 0.35 * v); a.end = back(hi(a.run.last) + 2); }
+      if (a.kind === "hop") a.t = front(a.o.x - (0.1 * v + 3));
+    }
+    acts.forEach((a, k) => { if (a.kind === "jump2") a.t = acts[k - 1].t + 17; });
+    // play the chain with the actions at their times: true when it is cleared
+    const play = () => {
+      const p = Object.assign({}, P0); lab.p = p;
+      let held = false;
+      const pits = g.pits;
+      g.obs = list;
+      for (let i = s0; i <= e; i++) {
+        const f = fr[i];
+        g.dist = f.dist; g.speed = f.speed; g.L = f.L; g.endless = f.endless; g.simT = f.t;
+        let press = false, slide = false;
+        for (const a of acts) {
+          if (a.t === i && a.kind !== "slide") press = true;
+          if (a.kind === "slide" && i >= a.t && i < a.end) {
+            // let go of slide for a jump that comes after this run
+            const nextJump = acts.find(b => (b.kind === "jump" || b.kind === "jump2") && b.t > a.t && b.t <= i);
+            if (!nextJump) slide = true;
+          }
+        }
+        if (slide && !held) { p.slideMin = 0.15; if (!p.onGround && !p.hop) p.fastFall = 0.5; }
+        held = slide; lab.input.slideHeld = slide;
+        if (press) p.buffer = 0.12;
+        lab.updatePlayer(f.dt);
+        if (g.pits !== pits || lab.firstHit()) return false;
+      }
+      return true;
+    };
+    let worst = Infinity, worstKind = "";
+    for (let pass = 0; pass < 2; pass++) {
+      acts.forEach((a, k) => {
+        const t0 = a.t, ok = [];
+        const lo2 = Math.max(s0, t0 - SCAN), hi2 = Math.min(e, t0 + SCAN);
+        for (let t = lo2; t <= hi2; t++) { a.t = t; ok.push(play()); }
+        // the runs of good press times; keep the one around the current time, or the longest
+        const runs = [];
+        for (let j = 0; j < ok.length; j++) {
+          if (!ok[j]) continue;
+          if (runs.length && runs[runs.length - 1].b === j - 1) runs[runs.length - 1].b = j;
+          else runs.push({ a: j, b: j });
+        }
+        const at = t0 - lo2;
+        const best = runs.find(r => r.a <= at && at <= r.b) ||
+          runs.reduce((m, r) => (!m || r.b - r.a > m.b - m.a ? r : m), null);
+        if (!best) { a.t = t0; a.width = 0; return; }
+        let w = 0;
+        for (let j = best.a; j <= best.b; j++) w += fr[lo2 + j].dt;
+        a.width = w;
+        a.t = lo2 + Math.round((best.a + best.b) / 2);   // play it at the middle of its window
+      });
+    }
+    for (const a of acts) if (a.width < worst) { worst = a.width; worstKind = a.kind; }
+    out.push({ id, steps: steps.map(o => o.act).join(""), speed: +v.toFixed(1), minSlack: +worst.toFixed(3), tight: worstKind, windows: acts.map(a => a.kind[0] + (a.kind === "jump2" ? "2" : "") + ":" + a.width.toFixed(2)).join(" "),
+               x: Math.round(lo(steps[0])) });
+  }
+  lab.input.slideHeld = false;
+  return out;
 }
 
 function describe(o, g0, speed) {
@@ -234,7 +345,7 @@ function report(course, fail, lab) {
 function runSeeds(first, n) {
   const totals = { seeds: 0, courses: 0, cozyCourses: 0, reducedMotionCourses: 0, impossible: 0, obstacles: 0, tunnels: 0, floorBugs: 0,
                    tunnelsWithTwoBugs: 0, tunnelsWithThreeBugs: 0, twinTunnels: 0, walls: 0, drones: 0, movingBugs: 0,
-                   ruleViolations: 0, maxSpeed: 0, maxFront: 0 };
+                   ruleViolations: 0, chains: 0, slackViolations: 0, minChainSlack: Infinity, maxSpeed: 0, maxFront: 0 };
   const fails = [];
   for (let seed = first; seed < first + n; seed++) {
     const modes = seed % 10 === 0 ? ["max", "ramp"] : ["max"];
@@ -247,6 +358,11 @@ function runSeeds(first, n) {
       lab.start();                                 // fresh player, same course
       const res = RULES_ONLY ? { ok: true, maxFront: 0 } : solve(lab, course);
       const bad = checkRules(lab, course);
+      for (const c of slackCheck(lab, course)) {
+        totals.chains++;
+        totals.minChainSlack = Math.min(totals.minChainSlack, c.minSlack);
+        if (c.minSlack < SLACK) { totals.slackViolations++; if (fails.length < 40) fails.push({ seed, mode, slack: c }); }
+      }
       totals.ruleViolations += bad.length;
       if (bad.length) fails.push({ seed, mode, rules: bad.slice(0, 3) });
       totals.courses++;
@@ -274,9 +390,100 @@ function runSeeds(first, n) {
   return { totals, fails };
 }
 
+// 5) Combo chains alone. A case = one chain design at one level, played at a speed v while
+// sized (by the game's own builder) for a speed spd: the slowest and fastest speed of that
+// level, the chain sized for the fastest one but met at the slowest, and endless top speed.
+function chainCases() {
+  const lab = loadGame(Math.random);
+  lab.start();
+  const { TU, LEVEL_TIME } = lab.consts, cases = [];
+  lab.CHAINS.forEach((c, d) => {
+    for (let L = c.from; L <= TU; L++) {
+      if (L >= 4 && c.from < 3) continue;          // (the game's own pool rule)
+      const lo = lab.speedFor(L, 0), hi = lab.speedFor(L, LEVEL_TIME);
+      for (const [v, size] of [[lo, lo], [lo, hi], [hi, hi]]) cases.push({ d, L, v, spd: 1.05 * size });
+    }
+    if (c.from >= 3) {                             // endless at top speed
+      lab.g.endless = true; lab.g.endlessT = 1e6;
+      const top = lab.speedFor(TU, LEVEL_TIME);
+      cases.push({ d, L: TU, v: top, spd: 1.05 * top, endless: true });
+      lab.g.endless = false;
+    }
+  });
+  return cases;
+}
+function chainCourse(lab, cs) {
+  const { STEP, PX } = lab.consts;
+  lab.start();
+  const P = [];
+  lab.buildChain(P, cs.L, cs.spd, lab.CHAINS[cs.d]);
+  const x0 = PX + 12 + 1.6 * cs.v;                 // a clear stretch before it
+  for (const o of P) o.x += x0;
+  const end = Math.max.apply(null, P.map(hi)), frames = [];
+  for (let i = 0, d = 0; d < end + 2.5 * cs.v; i++) {
+    d += cs.v * STEP;
+    frames.push({ dist: d, speed: cs.v, L: cs.L, endless: !!cs.endless, t: i * STEP, dt: STEP });
+  }
+  return { obs: P.sort((a, b) => lo(a) - lo(b)), items: [], frames };
+}
+function runChains(cases, first) {
+  const totals = { cases: 0, courses: 0, impossible: 0, slackViolations: 0, minSlack: Infinity }, fails = [], per = {};
+  cases.forEach((cs, k) => {
+    for (let r = 0; r < 10; r++) {
+      const lab = loadGame(rng((first + k) * 977 + r * 31 + 5));
+      const course = chainCourse(lab, cs);
+      lab.start();
+      const res = solve(lab, course);
+      const sl = slackCheck(lab, course)[0];
+      const steps = lab.CHAINS[cs.d].steps, key = steps;
+      per[key] = per[key] || { courses: 0, impossible: 0, minSlack: Infinity, minSpeed: Infinity, maxSpeed: 0 };
+      per[key].courses++; per[key].minSpeed = Math.min(per[key].minSpeed, cs.v); per[key].maxSpeed = Math.max(per[key].maxSpeed, cs.v);
+      totals.courses++;
+      if (!res.ok) { totals.impossible++; per[key].impossible++; fails.push({ steps, L: cs.L, v: +cs.v.toFixed(1), spd: +cs.spd.toFixed(1), endless: !!cs.endless }); }
+      const w = sl ? sl.minSlack : 0;
+      totals.minSlack = Math.min(totals.minSlack, w); per[key].minSlack = Math.min(per[key].minSlack, w);
+      if (w < SLACK) { totals.slackViolations++; fails.push({ steps, slack: sl, L: cs.L, v: +cs.v.toFixed(1) }); }
+    }
+    totals.cases++;
+  });
+  return { totals, fails, per };
+}
+
 const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
 if (!isMainThread) {
-  parentPort.postMessage(runSeeds(workerData.first, workerData.n));
+  parentPort.postMessage(workerData.cases ? runChains(workerData.cases, workerData.first)
+    : runSeeds(workerData.first, workerData.n));
+} else if (CHAINS_MODE) {
+  const jobsArg = process.argv.find(a => a.startsWith("--jobs="));
+  const jobs = Math.max(1, jobsArg ? parseInt(jobsArg.slice(7), 10) : 1);
+  const cases = chainCases(), t0 = Date.now(), parts = [];
+  for (let j = 0; j < jobs; j++) {
+    const mine = cases.filter((c, i) => i % jobs === j);
+    parts.push(new Promise((res, rej) => {
+      const w = new Worker(__filename, { workerData: { cases: mine, first: j * 1000 }, argv: process.argv.slice(2) });
+      w.on("message", res); w.on("error", rej);
+    }));
+  }
+  Promise.all(parts).then(results => {
+    const totals = { cases: 0, courses: 0, impossible: 0, slackViolations: 0, minSlack: Infinity }, per = {}, fails = [];
+    for (const r of results) {
+      for (const k of ["cases", "courses", "impossible", "slackViolations"]) totals[k] += r.totals[k];
+      totals.minSlack = Math.min(totals.minSlack, r.totals.minSlack);
+      fails.push(...r.fails);
+      for (const k in r.per) {
+        const a = per[k] || (per[k] = { courses: 0, impossible: 0, minSlack: Infinity, minSpeed: Infinity, maxSpeed: 0 }), b = r.per[k];
+        a.courses += b.courses; a.impossible += b.impossible; a.minSlack = Math.min(a.minSlack, b.minSlack);
+        a.minSpeed = Math.min(a.minSpeed, b.minSpeed); a.maxSpeed = Math.max(a.maxSpeed, b.maxSpeed);
+      }
+    }
+    totals.minSlack = +totals.minSlack.toFixed(3);
+    console.log(JSON.stringify(totals));
+    for (const k in per) console.log(k.padEnd(7), JSON.stringify({ courses: per[k].courses, impossible: per[k].impossible,
+      minSlack: +per[k].minSlack.toFixed(3), speeds: per[k].minSpeed.toFixed(1) + "-" + per[k].maxSpeed.toFixed(1) }));
+    for (const f of fails.slice(0, 15)) console.log(f.slack !== undefined ? "TOO LITTLE SLACK" : "IMPOSSIBLE", JSON.stringify(f));
+    console.log("seconds:", ((Date.now() - t0) / 1000).toFixed(1));
+    process.exitCode = totals.impossible || totals.slackViolations ? 1 : 0;
+  });
 } else {
   const args = process.argv.slice(2).filter(a => !a.startsWith("--"));
   const jobsArg = process.argv.find(a => a.startsWith("--jobs="));
@@ -295,14 +502,17 @@ if (!isMainThread) {
     const totals = {}, fails = [];
     for (const r of results) {
       for (const k in r.totals) {
-        totals[k] = k.startsWith("max") ? Math.max(totals[k] || 0, r.totals[k]) : (totals[k] || 0) + r.totals[k];
+        totals[k] = k.startsWith("max") ? Math.max(totals[k] || 0, r.totals[k])
+          : k.startsWith("min") ? Math.min(totals[k] === undefined ? Infinity : totals[k], r.totals[k])
+          : (totals[k] || 0) + r.totals[k];
       }
       fails.push(...r.fails);
     }
     totals.maxSpeed = +totals.maxSpeed.toFixed(1);
     console.log(JSON.stringify(totals));
-    for (const f of fails.slice(0, 15)) console.log(f.rules ? "RULE BROKEN" : "IMPOSSIBLE", JSON.stringify(f));
+    totals.minChainSlack = totals.chains ? +totals.minChainSlack.toFixed(3) : null;
+    for (const f of fails.slice(0, 15)) console.log(f.rules ? "RULE BROKEN" : f.slack ? "TOO LITTLE SLACK" : "IMPOSSIBLE", JSON.stringify(f));
     console.log("seconds:", ((Date.now() - t0) / 1000).toFixed(1));
-    process.exitCode = totals.impossible || totals.ruleViolations ? 1 : 0;
+    process.exitCode = totals.impossible || totals.ruleViolations || totals.slackViolations ? 1 : 0;
   });
 }
