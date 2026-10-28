@@ -40,7 +40,9 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   const D = window.GAME_DATA;
   const W = 288, H = 162, GROUND = 138, PX = 40, STEP = 1 / 60;
   const GRAVITY = 1000, JUMP_V = 300, DOUBLE_V = 265;  // single jump: 45 px high, 0.6 s in the air
-  const LEVEL_TIME = 15, EASY_TIME = 10, LIVES = 3, GOAL = 10000;
+  const LEVEL_TIME = 25, EASY_TIME = 10, LIVES = 3, GOAL = 10000;
+  // Within a level the speed rises by up to 12% and obstacles get up to 18% denser
+  const RAMP = 0.12, DENSER = 0.18;
   // Level intro: the game runs at 30% speed for 2.5 s under the level banner, then ramps back
   // to full speed in 0.7 s; the player is safe the whole time. In game time that is about
   // 1.2 s, kept free of obstacles (INTRO_CALM adds reaction time after it).
@@ -283,6 +285,17 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   const BUG = [outlined(BUG_TOP.concat([".m.m...m.m."])), outlined(BUG_TOP.concat(["m...m.m...m"]))];
   // A tiny floor bug that lives inside tunnels (6 x 3): slide hop over it
   const SPIKE = [outlined([".oooo.", "oyooyo", "m.mm.m"]), outlined([".oooo.", "oyooyo", ".m..m."])];
+  // A tall stack of three crash windows (9 x 21): jump over it
+  const CRASH_WIN = ["RRRRRRwRw", "wwwwwwwww", "wwwwRwwww", "wwwwRwwww", "wwwwwwwww", "wwwwRwwww", "ggggggggg"];
+  const WALL = outlined(CRASH_WIN.concat(CRASH_WIN, CRASH_WIN));
+  // A low flying drone bug (11 x 7, flies 8-15 px above the ground): slide under it
+  const DRONE_BODY = [".ooooooooo.", "ooyoooooyoo", ".ooooooooo.", "..k.k.k.k.."];
+  const DRONE = [outlined(["mmm.....mmm", ".m...m...m.", "..ppppppp.."].concat(DRONE_BODY)),
+                 outlined([".mmm...mmm.", ".m...m...m.", "..ppppppp.."].concat(DRONE_BODY))];
+  // A moving bug (purple, it walks back and forth)
+  const MOVER_TOP = ["..m.....m..", "...m...m...", "..ppppppp..", ".ppyppppyp.", ".ppppppppp.",
+                     "ppppppppppp", ".ppppppppp."];
+  const MOVER = [outlined(MOVER_TOP.concat([".m.m...m.m."])), outlined(MOVER_TOP.concat(["m...m.m...m"]))];
   const STAR = sprite(["..y..", ".yyy.", "yyyyy", ".yyy.", ".y.y."]);
   const STAR_SHINE = sprite(["..f..", ".yfy.", "yfffy", ".yfy.", ".y.y."]);
   const HEART = sprite([".RR.RR.", "RPRRRRR", "RRRRRRR", ".RRRRR.", "..RRR..", "...R..."]);
@@ -709,20 +722,31 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   function busyness(L) {
     const i = Math.min(L, YEARS.length - 1);
     let extra = 1;
-    if (L >= TU) extra = 1.06 * (g && g.endless ? 1 + Math.min(0.25, g.endlessT / 120) : 1);
+    if (L >= TU) extra = 1.06 * (g && g.endless ? 1 + Math.min(0.12, g.endlessT / 120) : 1);
     return { ratio: REL[i] / REL[0], extra: extra };
   }
-  const speedFor = L => { const b = busyness(L); return 95 * Math.pow(b.ratio, 0.7) * b.extra; };
-  const gapTimeFor = L => { const b = busyness(L); return 1.9 / Math.pow(b.ratio, 0.9) / b.extra; };
-  // 0.92 points per pixel: with about half of the stars collected, 10,000 comes ~10 s into
-  // the Tuwaiq level (more stars: earlier, fewer: later; never before that level)
-  const DIST_PTS = 0.92, STAR_PTS = 10;
+  // Speed and obstacle spacing at level L, lt seconds into it (rising through the level)
+  const rampOf = lt => Math.min(1, Math.max(0, lt) / LEVEL_TIME);
+  function speedFor(L, lt) {
+    const b = busyness(L);
+    return 95 * Math.pow(b.ratio, 0.7) * b.extra * (1 + RAMP * rampOf(lt));
+  }
+  function gapTimeFor(L, lt) {
+    const b = busyness(L);
+    return 1.9 / Math.pow(b.ratio, 0.9) / b.extra / (1 + DENSER * rampOf(lt));
+  }
+  const speedAt = t => { const L = levelAt(t); return speedFor(L, t - L * LEVEL_TIME); };
+  // 0.49 points per pixel + 10 per star: for a player who collects the stars on their way and
+  // buys a couple of items, 10,000 comes ~10 s into the Tuwaiq level (more stars or MARKETING:
+  // earlier, fewer: later; never before that level's intro is over)
+  const DIST_PTS = 0.49, STAR_PTS = 10;
   const score = () => Math.floor(g.points);
   const scoreMult = () => (g.mktL === g.L ? 2 : 1);   // MARKETING: x2 score for one level
   const levelAt = t => Math.min(TU, Math.floor(t / LEVEL_TIME));
 
   function reset() {
-    g = { dist: 0, simT: 0, L: 0, levelT: 0, speed: speedFor(0), stars: 0, lives: LIVES, points: 0,
+    g = { dist: 0, simT: 0, L: 0, levelT: 0, speed: speedFor(0, 0), stars: 0, lives: LIVES, points: 0,
+          introduced: {}, lastNewT: -1e9, passed: { wall: 0, drone: 0, mover: 0 }, hitBy: {},
           spent: 0, hearts: LIVES, shieldN: 0, magnetL: -1, mktL: -1, cozyNext: 0, bought: [],
           shopNow: false,
           obs: [], items: [], parts: [], floats: [], nextX: W + 30, nextPowerT: 12,
@@ -754,16 +778,40 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   }
 
   // ---------------------------------------------------------------- spawning (always fair)
-  function pickType(L, easy) {
+  // Obstacle types, the year they unlock in (level index) and the hint shown the first time
+  // one comes (in a calm moment, with extra room before and after it)
+  const UNLOCK = { wall: 1, drone: 2, mover: 3, bugbug: 3, twin: 3, bugdrone: 4, dronebug: 4 };
+  const HINT = { wall: "JUMP!", drone: "SLIDE UNDER!", mover: "IT MOVES!", bugbug: "TWO BUGS!",
+                 twin: "TWIN TUNNEL!", bugdrone: "JUMP, THEN SLIDE!", dronebug: "SLIDE, THEN JUMP!",
+                 bugs3: "3 FLOOR BUGS!" };
+  const NEW_BEFORE = 1.4, NEW_AFTER = 1.4, NEW_GAP = 5;   // seconds; one new type per 5 s at most
+  const WEIGHTS = [
+    { bug: 50, gap: 30, crunch: 20 },
+    { bug: 30, gap: 24, crunch: 14, tunnel: 16, wall: 16 },
+    { bug: 20, gap: 18, crunch: 10, tunnel: 16, wall: 14, drone: 22 },
+    { bug: 14, gap: 14, crunch: 8, tunnel: 14, wall: 10, drone: 12, mover: 14, bugbug: 8, twin: 6 },
+    { bug: 10, gap: 11, crunch: 6, tunnel: 12, wall: 10, drone: 10, mover: 12, bugbug: 9, twin: 6,
+      bugdrone: 8, dronebug: 6 },
+  ];
+  const MOVE_A = 14, MOVE_W = Math.PI * 2 / 1.6;   // a moving bug walks 14 px each way, 1.6 s
+  const moverX = (o, t) => o.x0 + MOVE_A * Math.sin(MOVE_W * t + o.ph);
+  function pickType(L, easy, lt, arriveT) {
     if (easy) return "bug";
     if (L >= 1 && !g.tunnels[L]) return "tunnel";          // every year from 2021 has a tunnel
-    const r = Math.random();
-    if (L === 0) return r < 0.5 ? "bug" : r < 0.8 ? "gap" : "crunch";
-    return r < 0.36 ? "bug" : r < 0.64 ? "gap" : r < 0.78 ? "crunch" : "tunnel";
+    if (lt > 4 && arriveT - g.lastNewT > NEW_GAP) {        // meet a new type in a calm moment
+      for (const k in UNLOCK) if (L >= UNLOCK[k] && !g.introduced[k]) return k;
+    }
+    const w = WEIGHTS[Math.min(L, WEIGHTS.length - 1)];
+    let total = 0;
+    for (const k in w) total += w[k];
+    let r = Math.random() * total;
+    for (const k in w) if ((r -= w[k]) < 0) return k;
+    return "bug";
   }
   // Tunnel rules, in seconds at the fastest speed the tunnel can meet. Nothing but the small
   // floor bug is ever placed inside a tunnel, and nothing at all (no obstacle, star row or
-  // power-up) in the safe zones in front of the entrance and behind the exit.
+  // power-up) in the safe zones in front of the entrance and behind the exit (a twin tunnel
+  // counts as one: its short opening is part of it).
   const TUN_BEFORE = 1.2;   // a late or double jump has landed and the slide is held
   const TUN_AFTER = 0.9;    // time to stand up and react to the next obstacle
   const BUG_IN = 0.6, BUG_OUT = 0.6;  // no floor bug in the first and last part of a tunnel
@@ -772,8 +820,51 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   function tunnelBugs(L) {
     if (L < 2) return 0;                                   // floor bugs from 2022
     if (!g.spikes[L]) return 1;                            // every year from 2022 has one
-    if (L >= 3 && Math.random() < 0.35) return 2;          // long double-bug tunnels from 2023
+    if (L >= 4 && Math.random() < 0.25) return 3;          // long three-bug tunnels from 2024
+    if (L >= 3 && Math.random() < 0.35) return 2;          // double-bug tunnels from 2023
     return Math.random() < 0.6 ? 1 : 0;
+  }
+  const ob = (type, x, w) => ({ type: type, x: x, w: w, dead: false, spikes: [] });
+  const SIZE = { bug: 11, wall: 9, drone: 11, mover: 11 };
+  // A tunnel at x with n floor bugs, placed by the rules above; returns it
+  function addTunnel(P, x, n, spd, short) {
+    const len = n === 3 ? rand(3.4, 3.8) : n === 2 ? rand(2.3, 2.7)
+      : n === 1 ? (short ? rand(1.4, 1.7) : rand(1.4, 1.9)) : (short ? rand(0.8, 1.2) : rand(0.8, 1.5));
+    const o = ob("tunnel", x, Math.round(spd * len));
+    const a = o.x + BUG_IN * spd, b = o.x + o.w - BUG_OUT * spd - SPIKE_W;   // allowed range
+    const xs = [];
+    for (let i = 0; i < n; i++) {                  // left to right, BUG_GAP apart, room for the rest
+      const lo = i ? xs[i - 1] + BUG_GAP * spd : a, hi = b - (n - 1 - i) * BUG_GAP * spd;
+      xs.push(rand(lo, Math.max(lo, hi)));
+    }
+    o.spikes = xs.map(sx => ob("spike", Math.round(sx), SPIKE_W));
+    P.push(o, ...o.spikes);
+    return o;
+  }
+  // The obstacles of one pattern, at x = 0 (P.len = its length)
+  function buildPattern(type, L, spd, vmin) {
+    const P = [];
+    if (SIZE[type] && type !== "mover") P.push(ob(type, 0, SIZE[type]));
+    else if (type === "gap") P.push(ob("gap", 0, Math.round(rand(22, Math.max(24, Math.min(58, 0.38 * g.speed))))));
+    else if (type === "crunch") P.push(ob("crunch", 0, Math.round(rand(28, 40))));
+    else if (type === "mover") {
+      const o = ob("mover", MOVE_A, SIZE.mover);
+      o.x0 = MOVE_A; o.lo = 0; o.hi = 2 * MOVE_A + SIZE.mover; o.ph = rand(0, Math.PI * 2);
+      P.push(o);
+    } else if (type === "bugbug") {                // close enough for one jump (or a double)
+      P.push(ob("bug", 0, 11), ob("bug", 11 + Math.round(rand(0.22, 0.3) * vmin), 11));
+    } else if (type === "bugdrone") {              // jump, land, slide
+      P.push(ob("bug", 0, 11), ob("drone", 11 + Math.round(rand(0.8, 0.95) * spd), 11));
+    } else if (type === "dronebug") {              // slide, stand up, jump
+      P.push(ob("drone", 0, 11), ob("bug", 11 + Math.round(rand(0.45, 0.6) * spd), 11));
+    } else if (type === "twin") {                  // two tunnels with a short opening between
+      const nb = () => (L >= 2 && Math.random() < 0.5 ? 1 : 0);
+      const a = addTunnel(P, 0, nb(), spd, true);
+      const b = addTunnel(P, a.x + a.w + Math.round(rand(0.35, 0.5) * spd), nb(), spd, true);
+      a.twinNext = true; b.twinOf = true;
+    } else addTunnel(P, 0, tunnelBugs(L), spd, false);
+    P.len = Math.max.apply(null, P.map(o => (o.hi !== undefined ? o.hi : o.x + o.w)));
+    return P;
   }
   // When will the player reach world x? The same speed easing as advanceWorld(), run ahead
   function predictArrive(x) {
@@ -781,7 +872,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     while (d + PX < x && t < g.simT + 30) {
       t += STEP; lt += STEP;
       if (L < TU && lt >= LEVEL_TIME) { lt -= LEVEL_TIME; L++; }
-      v += (speedFor(L) - v) * Math.min(1, STEP * 1.2);
+      v += (speedFor(L, lt) - v) * Math.min(1, STEP * 1.2);
       d += v * STEP;
     }
     return t;
@@ -809,55 +900,52 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     if (g.segStart >= g.dist + SPAWN_X) return;
     while (g.segStart < g.dist + SPAWN_X) {
       const arriveT = predictArrive(g.nextX);
-      const L = levelAt(arriveT);
+      const L = levelAt(arriveT), lt = arriveT - L * LEVEL_TIME;
       const easy = arriveT < EASY_TIME;           // the first 10 seconds: bugs only, wide gaps
-      // Margins use the fastest speed this obstacle can meet: the next level (or the endless
+      // Margins use the fastest speed this pattern can meet: the next level (or the endless
       // ramp) may already have started when the player gets there
-      let spd = 1.05 * Math.max(g.speed, speedFor(L), speedFor(levelAt(arriveT + 3)));
-      const type = pickType(L, easy);
-      // A gap is never wider than a single jump can clear with time to spare
-      const w = type === "bug" ? 11
-        : type === "gap" ? Math.round(rand(22, Math.max(24, Math.min(58, 0.38 * g.speed))))
-        : type === "crunch" ? Math.round(rand(28, 40))
-        : 0;
-      const o = { type: type, x: 0, w: w, dead: false, spikes: [] };
-      let n = 0;
-      const tunnelW = () => Math.round(spd * (n === 2 ? rand(2.3, 2.7) : n === 1 ? rand(1.4, 1.9) : rand(0.8, 1.5)));
-      if (type === "tunnel") {
-        n = tunnelBugs(L);
-        o.w = tunnelW();
-        g.tunnels[L] = true;
-        if (n) g.spikes[L] = true;
-      }
-      const x0 = type === "tunnel" ? Math.max(g.nextX, g.lastEnd + TUN_BEFORE * spd + ARC) : g.nextX;
-      o.x = calmX(x0, o.w);
-      if (o.x !== x0) {
-        // Moved past a level intro: it now meets the next level's speed, so it is sized again
+      let vmin = speedAt(arriveT);
+      let spd = 1.05 * Math.max(g.speed, vmin, speedAt(arriveT + 3));
+      const type = pickType(L, easy, lt, arriveT);
+      const tunnelLike = type === "tunnel" || type === "twin";
+      let P = buildPattern(type, L, spd, vmin);
+      let x = tunnelLike ? Math.max(g.nextX, g.lastEnd + TUN_BEFORE * spd + ARC) : g.nextX;
+      if (!g.introduced[type] && UNLOCK[type] !== undefined) x = Math.max(x, g.lastEnd + NEW_BEFORE * spd);
+      const cx = calmX(x, P.len);
+      if (cx !== x) {
+        // Moved past a level intro: it now meets the next level's speed, so it is made again
         // for that speed (its margins were measured for the old one)
-        const t2 = predictArrive(o.x);
-        spd = Math.max(spd, 1.05 * Math.max(speedFor(levelAt(t2)), speedFor(levelAt(t2 + 3))));
-        if (type === "tunnel") { o.w = tunnelW(); o.x = calmX(o.x, o.w); }
+        const t2 = predictArrive(cx);
+        vmin = Math.max(vmin, speedAt(t2));
+        spd = Math.max(spd, 1.05 * Math.max(vmin, speedAt(t2 + 3)));
+        P = buildPattern(type, levelAt(t2), spd, vmin);
+        x = calmX(cx, P.len);
+      }
+      let hint = g.introduced[type] || !UNLOCK[type] ? "" : HINT[type];
+      if (P.some(o => o.spikes.length === 3) && !g.introduced.bugs3) { hint = HINT.bugs3; g.introduced.bugs3 = true; }
+      if (UNLOCK[type] !== undefined) g.introduced[type] = true;
+      if (hint) g.lastNewT = arriveT;
+      if (tunnelLike) {
+        g.tunnels[L] = true;
+        if (P.some(o => o.type === "spike")) g.spikes[L] = true;
       }
       // Stars and power-ups go in the free run since the last obstacle, outside safe zones
-      fillSegment(g.segStart, type === "tunnel" ? o.x - TUN_BEFORE * spd : o.x, arriveT);
-      if (type === "tunnel") {
-        const a = o.x + BUG_IN * spd, b = o.x + o.w - BUG_OUT * spd - SPIKE_W;   // allowed range
-        if (n === 1) o.spikes.push(rand(a, b));
-        if (n === 2) {
-          const x1 = rand(a, b - BUG_GAP * spd);
-          o.spikes.push(x1, rand(x1 + BUG_GAP * spd, b));
-        }
-        o.spikes = o.spikes.map(sx => ({ type: "spike", x: Math.round(sx), w: SPIKE_W, dead: false }));
+      fillSegment(g.segStart, tunnelLike ? x - TUN_BEFORE * spd : x, arriveT);
+      for (const o of P) {
+        o.x += x;
+        if (o.type === "mover") { o.x0 += x; o.lo += x; o.hi += x; o.x = moverX(o, g.simT); }
+        g.obs.push(o);
       }
-      g.obs.push(o, ...o.spikes);
-      starsFor(o);
-      // Free run after every obstacle: at least 0.7 s of reaction time at the current speed
-      let space = Math.max(spd * 0.7 + 18, spd * gapTimeFor(L) * rand(0.8, 1.25));
+      if (hint) P[0].hint = hint;
+      for (const o of P) if (o.type !== "spike") starsFor(o);
+      // Free run after every pattern: at least 0.7 s of reaction time at the current speed
+      let space = Math.max(spd * 0.7 + 18, spd * gapTimeFor(L, lt) * rand(0.8, 1.25));
       if (easy) space *= 1.7;
-      if (type === "tunnel") space = Math.max(space, TUN_AFTER * spd + ARC);
-      g.lastEnd = o.x + o.w;
-      g.segStart = o.x + o.w + (type === "tunnel" ? TUN_AFTER * spd : 0);
-      g.nextX = o.x + o.w + space;
+      if (hint) space = Math.max(space * 1.6, NEW_AFTER * spd);
+      if (tunnelLike) space = Math.max(space, TUN_AFTER * spd + ARC);
+      g.lastEnd = x + P.len;
+      g.segStart = x + P.len + (tunnelLike ? TUN_AFTER * spd : 0);
+      g.nextX = x + P.len + space;
     }
     g.obs.sort((a, b) => a.x - b.x);
   }
@@ -888,6 +976,13 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     newRow();
     if (o.type === "bug") {
       addStar(midX - 14, GROUND - 20); addStar(midX, GROUND - 30); addStar(midX + 14, GROUND - 20);
+    } else if (o.type === "mover") {              // around the middle of its walk
+      const mx = o.x0 + 3.5;
+      addStar(mx - 14, GROUND - 24); addStar(mx, GROUND - 34); addStar(mx + 14, GROUND - 24);
+    } else if (o.type === "wall") {
+      addStar(midX - 14, GROUND - 28); addStar(midX, GROUND - 38); addStar(midX + 14, GROUND - 28);
+    } else if (o.type === "drone") {              // a low row to collect while sliding under it
+      addStar(o.x - 9, GROUND - 5); addStar(o.x + 3, GROUND - 5); addStar(o.x + 15, GROUND - 5);
     } else if (o.type === "gap") {
       addStar(midX - 16, GROUND - 26); addStar(midX, GROUND - 36); addStar(midX + 16, GROUND - 26);
     } else {
@@ -967,6 +1062,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       shake(3);
       return;
     }
+    g.hitBy.pit = (g.hitBy.pit || 0) + 1;
     if (loseLife()) bounceUp();
   }
   function updatePlayer(dt) {
@@ -1079,10 +1175,14 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       return;
     }
     if (!ceiling) o.dead = true;
+    g.hitBy[o.type] = (g.hitBy[o.type] || 0) + 1;
     loseLife();
   }
+  const WALL_H = 21, DRONE_Y = GROUND - 15, DRONE_H = 7;
   function obstacleBox(o, sx) {
-    if (o.type === "bug") return setBox(OBOX, sx + 1, GROUND - 7, 9, 7);
+    if (o.type === "bug" || o.type === "mover") return setBox(OBOX, sx + 1, GROUND - 7, 9, 7);
+    if (o.type === "wall") return setBox(OBOX, sx, GROUND - WALL_H, 9, WALL_H);
+    if (o.type === "drone") return setBox(OBOX, sx + 1, DRONE_Y, 9, DRONE_H);
     if (o.type === "spike") return setBox(OBOX, sx, GROUND - SPIKE_H, SPIKE_W, SPIKE_H);
     return setBox(OBOX, sx + 1, 0, o.w - 2, CEIL);           // crunch bar or tunnel ceiling
   }
@@ -1105,6 +1205,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       if (o.counted || o.x + o.w > g.dist + PX) continue;
       o.counted = true;
       if (o.type === "tunnel") g.tunnelsPassed++;
+      if (!o.dead && g.passed[o.type] !== undefined) g.passed[o.type]++;
       if (o.type === "spike" && !o.dead) g.hopsCleared++;
     }
   }
@@ -1182,19 +1283,19 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   const MEGAPHONE = sprite(["......oo.", "....oooo.", "ffoooooo.", "ffoooooof", "ffoooooo.",
                             "....oooo.", "......oo.", ".ff......", ".ff......"]);
   const SHOP = [
-    { id: "cozy", name: "COZY", price: 150, col: PAL.purple, icon: POW.cozy.icon,
+    { id: "cozy", name: "COZY", price: 200, col: PAL.purple, icon: POW.cozy.icon,
       effect: "SLOWER GAME FOR 10 SECONDS",
       why: "COZY IS THE TOP INDIE SUB-GENRE: " + pct(D.powerups.cozy) + "% HITS" },
-    { id: "magnet", name: "LOCALIZATION", price: 250, col: PAL.blue, icon: POW.magnet.icon,
+    { id: "magnet", name: "LOCALIZATION", price: 350, col: PAL.blue, icon: POW.magnet.icon,
       effect: "STAR MAGNET FOR THE WHOLE NEXT LEVEL",
       why: "10+ LANGUAGES: " + pct(D.powerups.languages_10plus) + "% HITS VS " + pct(D.powerups.one_language) + "% WITH ONE" },
-    { id: "shield", name: "MULTIPLAYER", price: 300, col: PAL.teal, icon: POW.shield.icon,
+    { id: "shield", name: "MULTIPLAYER", price: 450, col: PAL.teal, icon: POW.shield.icon,
       effect: "SHIELD THAT BLOCKS THE NEXT 2 HITS",
       why: "MULTIPLAYER: " + pct(D.powerups.multiplayer) + "% HITS VS " + pct(D.powerups.single_player) + "% SINGLE-PLAYER" },
-    { id: "life", name: "EXTRA LIFE", price: 350, col: PAL.red, icon: HEART,
+    { id: "life", name: "EXTRA LIFE", price: 550, col: PAL.red, icon: HEART,
       effect: "+1 HEART (MAX " + MAX_LIVES + ")",
       why: "ONLY " + pct(D.indie_hit_rate) + "% OF INDIE GAMES BECOME HITS: A SECOND TRY COUNTS" },
-    { id: "mkt", name: "MARKETING", price: 400, col: PAL.orange, icon: MEGAPHONE,
+    { id: "mkt", name: "MARKETING", price: 700, col: PAL.orange, icon: MEGAPHONE,
       effect: "X2 SCORE FOR THE WHOLE NEXT LEVEL",
       why: pct(D.few_reviews_pct) + "% OF GAMES GET UNDER 10 REVIEWS: GET SEEN" },
   ];
@@ -1260,7 +1361,8 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       g.shopNow = true;                            // the shop opens before the intro plays
       sfx("level");
     }
-    g.speed += (speedFor(g.L) - g.speed) * Math.min(1, dt * 1.2);
+    g.speed += (speedFor(g.L, g.levelT) - g.speed) * Math.min(1, dt * 1.2);
+    for (const o of g.obs) if (o.type === "mover") o.x = moverX(o, g.simT);
     g.dist += g.speed * dt;
     g.points += g.speed * dt * DIST_PTS * scoreMult();
     spawnAhead();
@@ -1412,12 +1514,24 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       if (o.dead || o.type === "gap") continue;
       const sx = Math.round(o.x - g.dist);
       if (sx > W || sx + o.w < 0) continue;
+      if (o.hint && !o.counted && sx > PX + 24) {   // the first one of a new type: a sign
+        const top = o.type === "wall" ? GROUND - WALL_H - 10 : o.type === "drone" ? DRONE_Y - 10
+          : o.type === "tunnel" ? CEIL - 34 : GROUND - 20;
+        shadowText("NEW: " + o.hint, sx + 5, top, PAL.yellow, 1, "center");
+      }
       if (o.type === "bug") ctx.drawImage(BUG[Math.floor(clock * 8) % 2], sx - 1, GROUND - 9);
+      else if (o.type === "mover") ctx.drawImage(MOVER[Math.floor(clock * 8) % 2], sx - 1, GROUND - 9);
+      else if (o.type === "wall") ctx.drawImage(WALL, sx - 1, GROUND - WALL_H - 1);
+      else if (o.type === "drone") {
+        ctx.fillStyle = "rgba(11, 13, 31, 0.45)";  // its shadow on the ground shows how low it is
+        ctx.fillRect(sx + 1, GROUND - 1, 9, 1);
+        ctx.drawImage(DRONE[Math.floor(clock * 12) % 2], sx - 1, DRONE_Y - 1);
+      }
       else if (o.type === "spike") ctx.drawImage(SPIKE[Math.floor(clock * 8) % 2], sx - 1, GROUND - SPIKE_H - 1);
       else {
         drawCeilingObstacle(o, sx);
         if (o.type === "crunch") continue;
-        if (!o.counted && sx > PX + 30) {          // a warning sign before the entrance
+        if (!o.counted && !o.twinOf && sx > PX + 30) {   // a warning sign before the entrance
           text("HOLD", sx - 4, CEIL - 26, PAL.yellow, 1, "right");
           text("SLIDE", sx - 4, CEIL - 19, PAL.yellow, 1, "right");
         }
@@ -1845,12 +1959,12 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
   // test defines window.INDIE_RUN_LAB before the game loads; the dashboard never does.
   if (window.INDIE_RUN_LAB) {
     Object.defineProperties(window.INDIE_RUN_LAB, Object.getOwnPropertyDescriptors({
-      consts: { STEP, GROUND, PX, TU, LEVEL_TIME, CEIL, SPIKE_W, W, INTRO_SIM, INTRO_CALM },
+      consts: { STEP, GROUND, PX, TU, LEVEL_TIME, CEIL, SPIKE_W, W, INTRO_SIM, INTRO_CALM, MOVE_A, DIST_PTS },
       start() { reset(); state = "play"; },
       get g() { return g; },
       get p() { return p; },
       set p(v) { p = v; },
-      input, speedFor, advanceWorld, stepWorld, updatePlayer, firstHit, sliding,
+      input, speedFor, advanceWorld, stepWorld, updatePlayer, firstHit, sliding, moverX,
     }));
   }
 
@@ -1884,7 +1998,7 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
       return p ? { y: p.y, onGround: p.onGround, sliding: g ? sliding() : false, hop: p.hop } : null;
     },
     get stats() {
-      return g ? { hits: g.hits, tunnelsPassed: g.tunnelsPassed, hopsCleared: g.hopsCleared,
+      return g ? { hits: g.hits, hitBy: g.hitBy, tunnelsPassed: g.tunnelsPassed, hopsCleared: g.hopsCleared, passed: g.passed,
                    stars: g.stars, finished: g.finished, endless: g.endless } : null;
     },
     get ahead() {
@@ -1895,7 +2009,8 @@ window.TUWAIQ_LOGO = /*TUWAIQ_LOGO*/""/*END_TUWAIQ_LOGO*/;
     get obstacles() {
       if (!g) return [];
       return g.obs.filter(o => !o.dead && o.x + o.w - g.dist > PX - 4).slice(0, 6)
-        .map(o => ({ type: o.type, dx: o.x - g.dist - (PX + 10), w: o.w }));
+        .map(o => ({ type: o.type, dx: o.x - g.dist - (PX + 10), w: o.w,
+                     vx: o.type === "mover" ? MOVE_A * MOVE_W * Math.cos(MOVE_W * g.simT + o.ph) : 0 }));
     },
   };
 })();
